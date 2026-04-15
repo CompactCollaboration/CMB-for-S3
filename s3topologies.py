@@ -526,6 +526,47 @@ class LensSpace(SphericalTopology):
 
     def plot_Clmlpmp(self, filename=None,normalize=True):
         from matplotlib import pyplot as plt 
+
+        plt.rcParams.update({
+            # 1. LaTeX and Fonts
+            'text.usetex': True,
+            'font.family': 'serif',
+            'font.serif': ['Computer Modern Roman'],
+            'text.latex.preamble': r'\usepackage{amsmath, amssymb}', 
+            
+            'font.size': 12,
+            'axes.titlesize': 14,
+            'axes.labelsize': 14,
+            'xtick.labelsize': 12,
+            'ytick.labelsize': 12,
+            'legend.fontsize': 11,
+            
+            
+            'axes.linewidth': 1.2,          # Slightly thicker bounding box
+            'xtick.direction': 'in',        # Ticks point INWARD
+            'ytick.direction': 'in',
+            'xtick.top': True,              # Ticks on the top edge
+            'ytick.right': True,            # Ticks on the right edge
+            'xtick.minor.visible': True,    # Minor ticks are standard in astrophysics
+            'ytick.minor.visible': True,
+            'xtick.major.size': 6,          # Major tick length
+            'xtick.minor.size': 3,          # Minor tick length
+            'ytick.major.size': 6,
+            'ytick.minor.size': 3,
+            'xtick.major.width': 1.0,       # Tick thicknesses
+            'ytick.major.width': 1.0,
+            
+            # 4. Lines and Legend
+            'lines.linewidth': 1.5,         # Thick enough to see, thin enough to be precise
+            'legend.frameon': True,        
+            'legend.loc': 'best',
+            
+            # 5. Figure Output
+            'figure.figsize': (6.0, 4.0),   # Standard aspect ratio for a single column
+            'figure.dpi': 150,              
+            'savefig.bbox': 'tight',        # Prevents labels from getting cut off
+            'savefig.pad_inches': 0.1
+        })
         
         plt.figure(figsize=(8,8))
         if normalize:

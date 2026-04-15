@@ -547,8 +547,8 @@ class LensSpace(SphericalTopology):
             'ytick.direction': 'in',
             'xtick.top': True,              # Ticks on the top edge
             'ytick.right': True,            # Ticks on the right edge
-            'xtick.minor.visible': True,    # Minor ticks are standard in astrophysics
-            'ytick.minor.visible': True,
+            'xtick.minor.visible': False,    # Minor ticks are standard in astrophysics
+            'ytick.minor.visible': False,
             'xtick.major.size': 6,          # Major tick length
             'xtick.minor.size': 3,          # Minor tick length
             'ytick.major.size': 6,
@@ -562,13 +562,13 @@ class LensSpace(SphericalTopology):
             'legend.loc': 'best',
             
             # 5. Figure Output
-            'figure.figsize': (6.0, 4.0),   # Standard aspect ratio for a single column
+            'figure.figsize': (5.0, 5.0),   # Standard aspect ratio for a single column
             'figure.dpi': 150,              
             'savefig.bbox': 'tight',        # Prevents labels from getting cut off
             'savefig.pad_inches': 0.1
         })
         
-        plt.figure(figsize=(8,8))
+        plt.figure(figsize=(6,6))
         if normalize:
             total_pool = get_available_cores()
     
@@ -591,11 +591,31 @@ class LensSpace(SphericalTopology):
         boundaries = np.cumsum(2*np.arange(2,self.lmax+1)+1) - 0.5
         
         plt.imshow(np.log10(np.abs(normC)),cmap=cmap,vmin=-8,origin='lower')
+
+        ells = np.arange(2, self.lmax + 1)
+        counts = 2 * ells + 1
+        block_ends = np.cumsum(counts)
+        start_indices = np.concatenate(([0], block_ends[:-1]))
+        tick_positions = start_indices + counts / 2.0 - 0.5
+
+        boundaries = block_ends - 0.5
         internal_boundaries = boundaries[:-1]
         N = boundaries[-1] + 0.5 
+        
         plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
         plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+
+        ax = plt.gca()
+        
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([f'${ell}$' for ell in ells], rotation=0)
+        ax.set_xlabel(r'$\ell^\prime$', fontsize=14)
+        
+        ax.set_yticks(tick_positions)
+        ax.set_yticklabels([f'${ell}$' for ell in ells])
+        ax.set_ylabel(r'$\ell$', fontsize=14)
+
         plt.colorbar()
-        plt.title(r'$\vert C_{\ell m\ell^\prime m^\prime} / \sqrt{C_\ell C_{\ell^\prime}} \vert $ for'+ f' L({self.p},{self.q}) and '+r'$\Omega_K$='+f'{self.OmegaK:.4f}',fontsize=16)
+        plt.title(f' L({self.p},{self.q}) // '+r'$\Omega_K$='+f'{self.OmegaK:.4f} // '+r'$(\theta_0,\chi_0,\varphi_0)=$'+f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})',fontsize=12)
         if filename is not None:
             plt.savefig(filename)

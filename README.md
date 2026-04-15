@@ -1,4 +1,4 @@
-NOTE: If you are running this code on a Mac, there are a couple of additional steps:
+Note: If you are running this code on a Mac, there are a couple of additional steps:
 
 `brew install llvm libomp`
 
@@ -10,14 +10,10 @@ export LDFLAGS="-L/opt/homebrew/opt/libomp/lib"
 export CPPFLAGS="-I/opt/homebrew/opt/libomp/include"
 ```
 
-To set things up, first of all do
+Then, for all operating systems, to set things up, first of all do
 
 ``chmod +x build_pipeline.sh``
 
 Then 
 
 ``./build_pipeline.sh``
-
-You can then submit the test script (you might want to modify it to specify your cluster's partition name and number of cpus)
-
-``sbatch run_lens.sh``

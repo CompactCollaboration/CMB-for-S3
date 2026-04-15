@@ -557,6 +557,6 @@ class LensSpace(SphericalTopology):
         plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
         plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
         plt.colorbar()
-        plt.title(r'$\vert C_{\ell m\ell^\prime m^\prime} / \sqrt{C_\ell C_{\ell^\prime}} \vert $ for'+ f' L({self.p},{self.q}) and '+r'$\Omega_K$='+f'{self.omegaK:.4f}',fontsize=16)
+        plt.title(r'$\vert C_{\ell m\ell^\prime m^\prime} / \sqrt{C_\ell C_{\ell^\prime}} \vert $ for'+ f' L({self.p},{self.q}) and '+r'$\Omega_K$='+f'{self.OmegaK:.4f}',fontsize=16)
         if filename is not None:
             plt.savefig(filename)

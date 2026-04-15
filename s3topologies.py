@@ -1,0 +1,588 @@
+import os
+
+import time
+import concurrent.futures
+import numpy as np
+from math import pi, gcd, sqrt
+from warnings import warn
+from multiprocessing import shared_memory
+from tqdm import tqdm
+from threadpoolctl import threadpool_limits
+
+from s3tools import *
+from wigner_d_jacobi import get_wigner_d_matrix_optimized
+from fast_wigner import init_wigner_tables, free_wigner_tables, compute_wig3j_flat
+
+class SphericalTopology():
+
+    def __init__(self,params : dict = None) -> None:
+        self.params = get_default_parameters()
+        if params is not None: self.params.update(params)
+        
+        self.OmegaK=self.params['OmegaK']
+        self.H0=self.params['H0']
+
+        self.Rc=omk2R(self.OmegaK,self.H0)
+        self.K=1/self.Rc**2
+        
+        self.lmax=self.params['lmax']
+        self.accboost=self.params['accboost']
+
+        self.initialize_camb(self.accboost,self.lmax)
+
+        if self.params['compute_kmax_internally']:
+            self.get_kmax_from_ell_max()
+        else:
+            self.kmax = self.params['kmax'] 
+
+        self.nmax = self.k2n(self.kmax)
+        self.kk = np.arange(3, self.nmax + 2) / self.Rc
+        self.kk[0] += 1e-10
+
+    def n2k(self, n):
+        return (n + 1) / self.Rc
+
+    def k2n(self, k):
+        return int(np.round(self.Rc * k)) - 1
+
+    def initialize_camb(self, acc_boost, lmax):
+        import camb 
+        
+        pars = camb.CAMBparams()
+        pars.set_cosmology(
+            H0=self.H0,
+            ombh2=0.022,
+            omch2=0.122,
+            mnu=0.06,
+            omk=self.OmegaK,
+            tau=0.06,
+        )
+        pars.InitPower.set_params(As=2e-9, ns=0.965, r=0)
+        pars.set_for_lmax(lmax)
+
+        pars.set_accuracy(
+            AccuracyBoost=acc_boost, lAccuracyBoost=acc_boost, lSampleBoost=50
+        )
+        pars.Accuracy.IntkAccuracyBoost = acc_boost
+        pars.Accuracy.SourcekAccuracyBoost = acc_boost
+        pars.Accuracy.TransferkBoost = acc_boost
+        pars.Accuracy.BesselBoost = acc_boost
+        pars.Transfer.high_precision = True
+
+        self.cambpars = pars
+
+    def primpower(self):
+        """
+        The dimensionless PS for S3: P(k)=k^2/(k^2-K)* As (q/0.05)**(ns-1), where q²=k²-K
+        """
+        import camb 
+        qs = np.sqrt(self.kk**2 - self.K)
+        return self.cambpars.scalar_power(qs) * (self.kk**2) / qs**2
+
+    def transfer_functions(self):
+        import camb 
+        from scipy.interpolate import CubicSpline 
+
+        data = camb.get_transfer_functions(self.cambpars)
+        transfer_function = data.get_cmb_transfer_data(tp="scalar")
+        transfer_data = np.array(transfer_function.delta_p_l_k) * 1e6 * 2.7255
+        k_list = np.array(transfer_function.q)
+        ell_list = np.array(transfer_function.L)[: self.lmax - 1] #Has size lmax-1
+
+        interps = CubicSpline(
+            k_list,
+            transfer_data[0, :ell_list.shape[0], :],
+            axis=1,
+        )
+
+        interp_transf = interps(self.kk) # Axis 0 has the ell's, Axis 1 has the k's
+        return interp_transf
+    
+    def get_kmax_from_ell_max(self):
+        import camb 
+        from scipy.interpolate import CubicSpline 
+        from threadpoolctl import threadpool_limits
+        
+        print('Looking for optimum kmax for the given ell_max...')
+        
+        # Figure out safe core count for the main thread
+        slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
+        num_cores = int(slurm_cpus) if slurm_cpus else (os.cpu_count() or 4)
+
+        with threadpool_limits(limits=num_cores):
+            kmax1 = 1e-4 
+            kmax2 = 7e-2
+            
+            self.params['compute_kmax_internally']=False
+            tol = self.params['compute_kmax_tol'] 
+            tol2 = 0.01 
+
+            data = camb.get_transfer_functions(self.cambpars)
+            transfer_function = data.get_cmb_transfer_data(tp="scalar")
+            transfer_data = np.array(transfer_function.delta_p_l_k) * 1e6 * 2.7255
+            k_list = np.array(transfer_function.q)
+            ell_list = np.array(transfer_function.L)[: self.lmax - 1]
+
+            interps = CubicSpline(
+                k_list,
+                transfer_data[0, :ell_list.shape[0], :],
+                axis=1,
+            )
+            
+            results = camb.get_results(self.cambpars)
+            Cls = results.get_cmb_power_spectra(self.cambpars, raw_cl=True, lmax=self.lmax, CMB_unit='muK')['unlensed_scalar']
+            Cls_s3 = Cls[2:,0]
+             
+            while abs(np.log10(kmax2/kmax1)) > tol2:
+                
+                kmid = (kmax1+kmax2)/2.0
+                self.params['kmax']=kmid
+                
+                self.nmax = self.k2n(kmid)
+                self.kk = np.arange(3, self.nmax + 2) / self.Rc
+                self.kk[0] += 1e-10
+
+                power = self.primpower()
+                interp_transf = interps(self.kk)
+                transfer_squared = interp_transf**2
+                Cls_s3_guess = 4*pi*transfer_squared @ (power/np.arange(3,self.nmax+2))
+
+                f_k = abs((Cls_s3-Cls_s3_guess)/Cls_s3)
+                diff = np.max(f_k)
+
+                if diff > tol:
+                    kmax1 = kmid
+                else:
+                    kmax2 = kmid
+                
+            print(f'Convergence reached. kmax is {kmid:1.4e}. '
+                  +f'This kmax will compute the Cls with an accuracy of {(1-diff)*100:2.2f}%.')
+            self.kmax = kmid
+
+class S3(SphericalTopology):
+
+    def __init__(self,params : dict = None) -> None:
+        super().__init__(params)
+
+    def get_Cls_TT(self):
+        import camb 
+        results = camb.get_results(self.cambpars)
+        Cls = results.get_cmb_power_spectra(self.cambpars, raw_cl=True, lmax=self.lmax, CMB_unit='muK')['unlensed_scalar']
+        return Cls[2:,0] 
+    
+    def get_manual_Cls(self):
+        power = self.primpower()
+        transfer_squared = self.transfer_functions()**2
+        return 4*pi*transfer_squared @ (power/np.arange(3,self.nmax+2))
+    
+class EllipticSpace(SphericalTopology):
+
+    def __init__(self,params : dict = None) -> None:
+        super().__init__(params)
+
+    def get_Cls(self):
+        power = self.primpower()
+        transfer_squared = self.transfer_functions()**2
+        return 8*pi*transfer_squared[:,0::2] @ (power[0::2]/np.arange(3,self.nmax+2,2))
+
+
+class LensSpace(SphericalTopology):
+
+    def __init__(self,params : dict = None) -> None:
+        super().__init__(params)
+
+        self.p = self.params['p']
+        self.q = self.params['q']
+
+        self.theta0 = self.params['obs_ang'][0]
+        self.chi0 = self.params['obs_ang'][1]
+        self.phi0 = self.params['obs_ang'][2]
+
+        self.volume=2*pi**2*self.Rc**3/self.p
+
+        if not (isinstance(self.p, int) and isinstance(self.q, int)):
+            raise TypeError("Both p and q must be integers.")
+        if self.p <= 0 or self.q <= 0:
+            raise ValueError("Both p and q must be positive integers.")
+        if self.q >= self.p:
+            if self.p==1 and self.q==1:
+                pass
+            else:
+                raise ValueError("q must be less than p.")
+        if gcd(self.p, self.q) != 1:
+            raise ValueError("The greatest common factor of p and q must be 1.")
+        
+        self.num_workers = self.params['num_workers']
+        self.batchsize = self.params['batchsize']
+        self.use_tqdm = self.params['use_tqdm']
+                
+    
+    def _compute_n_batch(self, n_list, num_lm, ell_arr, mm_arr,
+                          transfer_funcs, power_spectrum, threads_per_worker):
+        import traceback
+        try:
+               
+            with threadpool_limits(limits=threads_per_worker):
+
+                C_local= np.zeros((num_lm, num_lm), dtype=np.complex128)
+
+                CHUNK_SIZE = 50000
+
+                for n in n_list:
+                    
+                    n_idx = n - 2
+                    prefactor = power_spectrum[n_idx] / (n + 1)
+
+                    pairs = find_mLmR_pairs(n, self.p, self.q)
+                    if len(pairs) == 0: continue
+
+                    mmL_all = (2 * pairs[:, 0]).astype(np.int32)
+                    mmR_all = (2 * pairs[:, 1]).astype(np.int32)
+                    num_pairs = len(mmL_all)
+
+                    valid_ell_mask = (ell_arr >= 2) & (ell_arr <= n) & ((ell_arr - 2) < transfer_funcs.shape[0]) #transfer_funcs.shape[0] is lmax-1, this is saying ell<lmax+1
+                    valid_i_global = np.where(valid_ell_mask)[0]
+                    
+                    mm_valid = mm_arr[valid_i_global]
+                    ell_valid = ell_arr[valid_i_global]
+                    delta_valid = np.ascontiguousarray(transfer_funcs[ell_valid - 2, n_idx])
+
+                    if self.chi0 == 0:
+                        
+                        from scipy.sparse import coo_matrix
+
+                        for k_start in range(0, num_pairs, CHUNK_SIZE):
+
+                            k_end = min(k_start + CHUNK_SIZE, num_pairs)
+                            mmL_list = mmL_all[k_start:k_end]
+                            mmR_list = mmR_all[k_start:k_end]
+                            chunk_pairs_len = len(mmL_list)
+
+                            target_mm = mmL_list + mmR_list
+                            valid_mask_2d = (mm_valid[:,None]==target_mm[None,:])
+                            flat_i, flat_k = np.where(valid_mask_2d)
+
+                            if len(flat_i) == 0: continue
+
+                            final_i = flat_i.astype(np.int32)
+                            final_k = flat_k.astype(np.int32)
+
+                            ell_target = ell_valid[final_i]
+                            mm_target = mm_valid[final_i]
+                            mmL_target = mmL_list[final_k]
+                            
+                            #Symmetries of wig3j symbols
+                            
+                            mm_pos = np.abs(mm_target)
+                            flip_mask = (mm_target < 0)
+                            mmL_pos = mmL_target.copy()
+                            mmL_pos[flip_mask] = -mmL_pos[flip_mask]
+
+                            mmR_pos = mm_pos - mmL_pos
+                            swap_mask = (mmR_pos > mmL_pos)
+                            mmL_can = np.maximum(mmL_pos, mmR_pos)
+
+                            odd_J = ((n + ell_target) & 1) == 1
+                            apply_phase = odd_J & (flip_mask != swap_mask)
+
+                            total_phase = np.ones(len(ell_target), dtype=np.float64)
+                            total_phase[apply_phase] = -1.0
+
+                            # The point of doing this weird thing is to do np.unique over a 1D array, which is much faster than
+                            # np.unique over a 2D aray and setting axis=0
+
+                            packed_triplets = (
+                                ell_target.astype(np.int64) * 1000000000 + 
+                                mm_pos.astype(np.int64) * 100000 + 
+                                (mmL_can.astype(np.int64) + 20000)
+                            )
+
+                            _, unique_indices, inverse_indices = np.unique(
+                                packed_triplets, return_index=True, return_inverse=True
+                            )
+
+
+                            w3j_unique = compute_wig3j_flat(
+                                n, 
+                                ell_target[unique_indices], 
+                                mm_pos[unique_indices], 
+                                mmL_can[unique_indices]
+                            )
+
+                            w3j_vals = w3j_unique[inverse_indices] * total_phase
+                            
+                            values = delta_valid[final_i] * w3j_vals
+                            valid_indices = (valid_i_global[final_i], final_k)
+
+                            # generate sparse matrix
+                            V_coo = coo_matrix((values.astype(np.complex128), 
+                                                valid_indices), 
+                                                shape=(num_lm,chunk_pairs_len), 
+                                                dtype=np.complex128)
+
+                            V_csr = V_coo.tocsr()
+                            result_sparse = V_csr @ V_csr.conj().T
+                            C_local += prefactor * result_sparse.toarray()
+
+                    else:
+                        small_d = get_wigner_d_matrix_optimized(n, 2 * self.chi0)
+
+                        for k_start in range(0, num_pairs, CHUNK_SIZE):
+                        
+                            k_end = min(k_start + CHUNK_SIZE, num_pairs)
+                            mmL_list = mmL_all[k_start:k_end]
+                            mmR_list = mmR_all[k_start:k_end]
+                            chunk_pairs_len = len(mmL_list)
+
+                            diff = mm_valid[:, None] - mmL_list[None, :]
+                            valid_mask_2d = (diff >= -n) & (diff <= n)
+                            flat_i, flat_k = np.where(valid_mask_2d)
+                            
+                            row_indices = (mmR_list[flat_k] + n) // 2
+                            col_indices = (diff[flat_i, flat_k] + n) // 2
+                            flat_d = small_d[row_indices, col_indices]
+
+                            if len(flat_i) == 0: continue
+
+                            final_i = flat_i.astype(np.int32)
+                            final_k = flat_k.astype(np.int32)
+
+                            ell_target = ell_valid[final_i]
+                            mm_target = mm_valid[final_i]
+                            mmL_target = mmL_list[final_k]
+                            
+                            #Symmetries of wig3j symbols
+                            
+                            mm_pos = np.abs(mm_target)
+                            flip_mask = (mm_target < 0)
+                            mmL_pos = mmL_target.copy()
+                            mmL_pos[flip_mask] = -mmL_pos[flip_mask]
+
+                            mmR_pos = mm_pos - mmL_pos
+                            swap_mask = (mmR_pos > mmL_pos)
+                            mmL_can = np.maximum(mmL_pos, mmR_pos)
+
+                            odd_J = ((n + ell_target) & 1) == 1
+                            apply_phase = odd_J & (flip_mask != swap_mask)
+
+                            total_phase = np.ones(len(ell_target), dtype=np.float64)
+                            total_phase[apply_phase] = -1.0
+
+                            # The point of doing this weird thing is to do np.unique over a 1D array, which is much faster than
+                            # np.unique over a 2D aray and setting axis=0
+
+                            packed_triplets = (
+                                ell_target.astype(np.int64) * 1000000000 + 
+                                mm_pos.astype(np.int64) * 100000 + 
+                                (mmL_can.astype(np.int64) + 20000)
+                            )
+
+                            _, unique_indices, inverse_indices = np.unique(
+                                packed_triplets, return_index=True, return_inverse=True
+                            )
+
+
+                            w3j_unique = compute_wig3j_flat(
+                                n, 
+                                ell_target[unique_indices], 
+                                mm_pos[unique_indices], 
+                                mmL_can[unique_indices]
+                            )
+
+                            w3j_vals = w3j_unique[inverse_indices] * total_phase
+
+                            V_chunk = np.zeros((num_lm, chunk_pairs_len), dtype=np.complex128)
+                            V_chunk[valid_i_global[final_i], final_k] = delta_valid[final_i] * w3j_vals * flat_d
+
+                            C_local += (prefactor * (V_chunk @ V_chunk.conj().T))
+                          
+            return len(n_list), C_local
+        
+        except Exception as e:
+            print(f"\n--- CRITICAL ERROR IN WORKER ---")
+            traceback.print_exc()
+            raise e
+        
+    def compute_Clmlpmp_optimized(self,normalize=False):
+        import uuid
+        start = time.time()
+        print(f'Clmlpmp computation started. nmax is {self.nmax}')
+        num_lm = self.lmax * (self.lmax + 2) - 3
+
+        if self.num_workers is not None:
+            num_workers = self.num_workers
+        else:
+            slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
+            
+            if slurm_cpus is not None:
+                num_workers = int(slurm_cpus)
+            else:
+                try:
+                    num_workers = len(os.sched_getaffinity(0))
+                except AttributeError:
+                    num_workers = os.cpu_count() or 4
+
+            num_workers = int(num_workers//4) 
+
+        total_pool = get_available_cores()
+
+        threads_per_worker = max(1, total_pool // num_workers)
+
+        with threadpool_limits(limits=total_pool):
+            power_spectrum = self.primpower()
+            transfer_funcs = self.transfer_functions()
+
+        lm_map = np.array([lmindex(i) for i in range(num_lm)])
+
+        ell_arr = np.array([lm[0] for lm in lm_map], dtype=np.int32)
+        m_arr = np.array([lm[1] for lm in lm_map], dtype=np.int32)
+        mm_arr = 2 * m_arr
+
+        print(f"Distributing sum in n across {num_workers} parallel CPU cores...")
+        
+        init_wigner_tables(self.nmax * 2, 3)
+        worker_init = init_wigner_tables
+        worker_initargs = (self.nmax * 2, 3)
+
+        all_ns_desc = list(range(self.nmax, 1, -1))
+
+        if self.batchsize is not None:
+            num_batch = int(np.round(self.nmax/self.batchsize))
+        else:
+            num_batch = num_workers
+        
+        n_batches = [[] for _ in range(num_batch)] 
+        
+        for i, n in enumerate(all_ns_desc):
+            n_batches[i % num_batch].append(n)
+
+        n_batches = [batch for batch in n_batches if len(batch) > 0]  
+
+        C_total = np.zeros((num_lm,num_lm),dtype=np.complex128)
+
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=num_workers,
+            initializer=worker_init,
+            initargs=worker_initargs
+        ) as executor:
+            
+            futures = [
+                executor.submit(
+                    self._compute_n_batch, 
+                    batch, num_lm, ell_arr, mm_arr,
+                    transfer_funcs, power_spectrum, threads_per_worker
+                )
+                for batch in n_batches
+            ]
+
+            completed_n = 0
+            total_n = self.nmax-1
+            
+            if not self.use_tqdm:
+                for future in concurrent.futures.as_completed(futures):
+                    n_count, local_C = future.result() 
+                    C_total += local_C
+                    completed_n += n_count
+                    percent = 100 * completed_n / total_n
+                    print(f"Progress: {completed_n}/{total_n} ({percent:.1f}%)", flush=True)
+            else:
+                progress_bar = tqdm(
+                    concurrent.futures.as_completed(futures), 
+                    total=len(futures), 
+                    desc="Computing batches",
+                    smoothing=0.1
+                )
+                for future in progress_bar:
+                    n_count, local_C = future.result() 
+                    C_total += local_C
+                    completed_n += n_count
+                    progress_bar.set_postfix(n_processed=f"{completed_n}/{total_n}")
+        
+        v=np.zeros(num_lm,dtype=np.complex128)
+        for i, (ell,m) in enumerate(lm_map):
+            phase = 1 if m%2==0 else -1
+            v[i]=1j**(-ell)*sqrt(2*ell+1)*phase*np.exp(-1j*m*(self.theta0-self.phi0))
+            
+        phase_matrix=np.outer(v,np.conj(v))
+
+        free_wigner_tables()
+
+        total_time = time.time() - start
+        print(f"Time taken: {total_time:.2f}s")
+
+        C_final = self.p * 4 * pi * phase_matrix * C_total
+
+        if normalize:
+            print("Normalizing matrix to S3.")
+            transfer_squared = transfer_funcs**2
+            Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
+
+            tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
+            sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
+            
+            return C_final/sqrtClClp
+        else:
+            return C_final
+    
+    def profile_math_kernel(self, target_n):
+        """
+        Runs cProfile sequentially on the 10 heaviest 'n' iterations right below target_n. 
+        This avoids Multiprocessing blinding the profiler and shows exactly how 
+        many seconds are spent inside Cython vs Numpy arrays.
+        """
+        import cProfile
+        import pstats
+        import io
+
+        print(f"--- Profiling Native Math Kernel up to n={target_n} ---")
+        
+        init_wigner_tables(target_n * 2, 3)
+        num_lm = self.lmax * (self.lmax + 2) - 3
+        power_spectrum = self.primpower()
+        transfer_funcs = self.transfer_functions()
+
+        lm_map = np.array([lmindex(i) for i in range(num_lm)])
+        ell_arr = np.array([lm[0] for lm in lm_map], dtype=np.int32)
+        m_arr = np.array([lm[1] for lm in lm_map], dtype=np.int32)
+        mm_arr = 2 * m_arr
+        
+        pr = cProfile.Profile()
+        pr.enable()
+        
+        # Profile the top 10 heaviest values
+        for n in range(target_n, max(1, target_n - 10), -1):
+            self._compute_single_n(n, num_lm, ell_arr, m_arr, mm_arr, transfer_funcs, power_spectrum)
+            
+        pr.disable()
+        free_wigner_tables()
+        
+        s = io.StringIO()
+        ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
+        ps.print_stats(25) 
+        
+        print(s.getvalue())
+
+def plot_Clmlpmp(C,lmax,p,q,omk, Cells=None, filename=None,normalize=True):
+    from matplotlib import pyplot as plt 
+    
+    plt.figure(figsize=(8,8))
+    if normalize:
+        v=np.repeat(Cells,2*np.arange(2,lmax+1)+1)
+        sqrtClClp = np.sqrt(np.outer(v,v))
+        normC=C/sqrtClClp
+    else: # input matrix is already normalized
+        normC=C
+
+    cmap = plt.cm.inferno.copy()
+    cmap.set_bad(color='black')
+    boundaries = np.cumsum(2*np.arange(2,lmax+1)+1) - 0.5
+    
+    plt.imshow(np.log10(np.abs(normC)),cmap=cmap,vmin=-8,origin='lower')
+    internal_boundaries = boundaries[:-1]
+    N = boundaries[-1] + 0.5 
+    plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+    plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+    plt.colorbar()
+    plt.title(r'$\vert C_{\ell m\ell^\prime m^\prime} / \sqrt{C_\ell C_{\ell^\prime}} \vert $ for'+ f' L({p},{q}) and '+r'$\Omega_K$='+f'{omk:.4f}',fontsize=16)
+    if filename is not None:
+        plt.savefig(filename)

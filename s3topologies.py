@@ -519,70 +519,44 @@ class LensSpace(SphericalTopology):
 
             tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
             sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
-            
-            return C_final/sqrtClClp
+
+            self.C_matrix = C_final/sqrtClClp
         else:
-            return C_final
-    
-    def profile_math_kernel(self, target_n):
-        """
-        Runs cProfile sequentially on the 10 heaviest 'n' iterations right below target_n. 
-        This avoids Multiprocessing blinding the profiler and shows exactly how 
-        many seconds are spent inside Cython vs Numpy arrays.
-        """
-        import cProfile
-        import pstats
-        import io
-
-        print(f"--- Profiling Native Math Kernel up to n={target_n} ---")
-        
-        init_wigner_tables(target_n * 2, 3)
-        num_lm = self.lmax * (self.lmax + 2) - 3
-        power_spectrum = self.primpower()
-        transfer_funcs = self.transfer_functions()
-
-        lm_map = np.array([lmindex(i) for i in range(num_lm)])
-        ell_arr = np.array([lm[0] for lm in lm_map], dtype=np.int32)
-        m_arr = np.array([lm[1] for lm in lm_map], dtype=np.int32)
-        mm_arr = 2 * m_arr
-        
-        pr = cProfile.Profile()
-        pr.enable()
-        
-        # Profile the top 10 heaviest values
-        for n in range(target_n, max(1, target_n - 10), -1):
-            self._compute_single_n(n, num_lm, ell_arr, m_arr, mm_arr, transfer_funcs, power_spectrum)
+            self.C_matrix = C_final
             
-        pr.disable()
-        free_wigner_tables()
-        
-        s = io.StringIO()
-        ps = pstats.Stats(pr, stream=s).sort_stats('tottime')
-        ps.print_stats(25) 
-        
-        print(s.getvalue())
+        return self.C_matrix
 
-def plot_Clmlpmp(C,lmax,p,q,omk, Cells=None, filename=None,normalize=True):
-    from matplotlib import pyplot as plt 
+    def plot_Clmlpmp(self, filename=None,normalize=True):
+        from matplotlib import pyplot as plt 
+        
+        plt.figure(figsize=(8,8))
+        if normalize:
+            total_pool = get_available_cores()
     
-    plt.figure(figsize=(8,8))
-    if normalize:
-        v=np.repeat(Cells,2*np.arange(2,lmax+1)+1)
-        sqrtClClp = np.sqrt(np.outer(v,v))
-        normC=C/sqrtClClp
-    else: # input matrix is already normalized
-        normC=C
+            with threadpool_limits(limits=total_pool):
+                power_spectrum = self.primpower()
+                transfer_funcs = self.transfer_functions()
+                
+            transfer_squared = transfer_funcs**2
+            Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
 
-    cmap = plt.cm.inferno.copy()
-    cmap.set_bad(color='black')
-    boundaries = np.cumsum(2*np.arange(2,lmax+1)+1) - 0.5
+            tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
+            sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
+            
+            normC=self.C_matrix/sqrtClClp
+        else: # input matrix is already normalized
+            normC=self.C_matrix
     
-    plt.imshow(np.log10(np.abs(normC)),cmap=cmap,vmin=-8,origin='lower')
-    internal_boundaries = boundaries[:-1]
-    N = boundaries[-1] + 0.5 
-    plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
-    plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
-    plt.colorbar()
-    plt.title(r'$\vert C_{\ell m\ell^\prime m^\prime} / \sqrt{C_\ell C_{\ell^\prime}} \vert $ for'+ f' L({p},{q}) and '+r'$\Omega_K$='+f'{omk:.4f}',fontsize=16)
-    if filename is not None:
-        plt.savefig(filename)
+        cmap = plt.cm.inferno.copy()
+        cmap.set_bad(color='black')
+        boundaries = np.cumsum(2*np.arange(2,self.lmax+1)+1) - 0.5
+        
+        plt.imshow(np.log10(np.abs(normC)),cmap=cmap,vmin=-8,origin='lower')
+        internal_boundaries = boundaries[:-1]
+        N = boundaries[-1] + 0.5 
+        plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+        plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+        plt.colorbar()
+        plt.title(r'$\vert C_{\ell m\ell^\prime m^\prime} / \sqrt{C_\ell C_{\ell^\prime}} \vert $ for'+ f' L({self.p},{self.q}) and '+r'$\Omega_K$='+f'{self.omegaK:.4f}',fontsize=16)
+        if filename is not None:
+            plt.savefig(filename)

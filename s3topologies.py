@@ -523,8 +523,6 @@ class LensSpace(SphericalTopology):
             self.C_matrix = C_final/sqrtClClp
         else:
             self.C_matrix = C_final
-            
-        return self.C_matrix
 
     def plot_Clmlpmp(self, filename=None,normalize=True):
         from matplotlib import pyplot as plt 

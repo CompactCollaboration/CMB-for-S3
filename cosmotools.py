@@ -185,7 +185,7 @@ def find_d_lss(OK,H0=67.5):
 
     return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(Om, OK, OL))[0]/1000
 
-def find_upper_p(p,OK):
+def find_upper_p(OK):
     """
     Determines the upper limit on p for a given OmegaK. Based on Eq. (5.3) in Paper Ic.
     """

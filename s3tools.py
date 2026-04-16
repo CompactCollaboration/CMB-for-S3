@@ -20,6 +20,7 @@ def get_default_parameters():
         'num_workers': None,
         'batchsize': None,
         'use_tqdm': False,
+        'verbose':True,
     }
     return params
 

@@ -1,13 +1,10 @@
 import numpy as np
 import scipy.integrate as integ
+from scipy.constants import c
 import math
 import pandas as pd
 import pathlib
 from s3tools import omk2R, R2omk
-import multiprocessing
-import concurrent.futures
-from tqdm import tqdm
-# rng = np.random.default_rng()
 
 def is_homeomorphic(p, q1, q2):
     """

@@ -422,7 +422,7 @@ class LensSpace(SphericalTopology):
                 except AttributeError:
                     num_workers = os.cpu_count() or 4
 
-            num_workers = int(num_workers//4) 
+            num_workers = int(num_workers//2) 
 
         total_pool = get_available_cores()
 
@@ -601,6 +601,6 @@ class LensSpace(SphericalTopology):
         ax.set_ylabel(r'$\ell$', fontsize=14)
 
         plt.colorbar()
-        plt.title(f' L({self.p},{self.q}) // '+r'$\Omega_K$='+f'{self.OmegaK:.4f} // '+r'$(\theta_0,\chi_0,\varphi_0)=$'+f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})',fontsize=12)
+        plt.title(f' L({self.p},{self.q}) \n'+r'$\Omega_K$='+f'{self.OmegaK:.4f} // '+r'$(\theta_0,\chi_0,\varphi_0)=$'+f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})',fontsize=12)
         if filename is not None:
             plt.savefig(filename)

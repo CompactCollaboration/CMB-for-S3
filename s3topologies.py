@@ -403,7 +403,7 @@ class LensSpace(SphericalTopology):
             traceback.print_exc()
             raise e
         
-    def compute_Clmlpmp_optimized(self,normalize=False):
+    def compute_Clmlpmp_optimized(self):
         import uuid
         start = time.time()
         print(f'Clmlpmp computation started. nmax is {self.nmax}')
@@ -512,19 +512,16 @@ class LensSpace(SphericalTopology):
 
         C_final = self.p * 4 * pi * phase_matrix * C_total
 
-        if normalize:
-            print("Normalizing matrix to S3.")
-            transfer_squared = transfer_funcs**2
-            Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
+        self.C_matrix = C_final
 
-            tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
-            sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
+        transfer_squared = transfer_funcs**2
+        Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
+        tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
+        sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
 
-            self.C_matrix = C_final/sqrtClClp
-        else:
-            self.C_matrix = C_final
-
-    def plot_Clmlpmp(self, filename=None,normalize=True):
+        self.norm_C_matrix = C_final/sqrtClClp
+        
+    def plot_Clmlpmp(self, filename=None):
         from matplotlib import pyplot as plt 
 
         plt.rcParams.update({
@@ -569,28 +566,16 @@ class LensSpace(SphericalTopology):
         })
         
         plt.figure(figsize=(6,6))
-        if normalize:
-            total_pool = get_available_cores()
-    
-            with threadpool_limits(limits=total_pool):
-                power_spectrum = self.primpower()
-                transfer_funcs = self.transfer_functions()
-                
-            transfer_squared = transfer_funcs**2
-            Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
-
-            tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
-            sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
-            
-            normC=self.C_matrix/sqrtClClp
-        else: # input matrix is already normalized
-            normC=self.C_matrix
     
         cmap = plt.cm.inferno.copy()
         cmap.set_bad(color='black')
         boundaries = np.cumsum(2*np.arange(2,self.lmax+1)+1) - 0.5
+
+        if self.norm_C_matrix is None:
+            print('Compute Clmlpmp first')
+            return -1
         
-        plt.imshow(np.log10(np.abs(normC)),cmap=cmap,vmin=-8,origin='lower')
+        plt.imshow(np.log10(np.abs(self.norm_C_matrix)),cmap=cmap,vmin=-8,origin='lower')
 
         ells = np.arange(2, self.lmax + 1)
         counts = 2 * ells + 1

@@ -520,7 +520,23 @@ class LensSpace(SphericalTopology):
         sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
 
         self.norm_C_matrix = C_final/sqrtClClp
+
+    def compute_KL(self):
+
+        if self.norm_C_matrix is None:
+            print('Compute Clmlpmp first')
+            return -1
         
+        else:
+            lams = np.linalg.eigvals(self.norm_C_matrix)
+            forward_KL = 0
+            backward_KL = 0
+            for lam in lams:
+                forward_KL += (lam-np.log(lam)-1)
+                backward_KL += (1.0/lam+np.log(lam)-1)
+            return np.array([np.real(forward_KL),np.real(backward_KL)])
+
+
     def plot_Clmlpmp(self, filename=None):
         from matplotlib import pyplot as plt 
 

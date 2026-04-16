@@ -17,3 +17,7 @@ Then, for all operating systems, to set things up, first of all do
 Then 
 
 ``./build_pipeline.sh``
+
+-------------
+
+For an example of how to use the code, see the notebook ``Example_Notebook.ipynb``

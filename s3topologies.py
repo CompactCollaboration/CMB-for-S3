@@ -521,6 +521,19 @@ class LensSpace(SphericalTopology):
 
         self.norm_C_matrix = C_final/sqrtClClp
 
+    def get_C_matrix(self,norm=True,lmin=2,lmax=10):
+
+        if self.C_matrix is None:
+            print('Compute Clmlpmp first')
+            return -1
+        
+        idx_start = nindex(l=lmin,m=-lmin)
+        idx_end = nindex(l=lmax,m=lmax)
+        if norm:
+            return self.norm_C_matrix[idx_start:idx_end+1,idx_start:idx_end+1]
+        else:
+            return self.C_matrix[idx_start:idx_end+1,idx_start:idx_end+1]
+
     def compute_KL(self):
 
         if self.norm_C_matrix is None:

@@ -164,30 +164,54 @@ def get_lens_distances(pmax):
 
     return df2
 
-def Einv(z, Om, OK, OL):
+def Einv(z, OmegaM, OmegaK, OmegaL):
     zp1 = 1 + z
-    return 1 / np.sqrt(Om * zp1**3 + OK * zp1**2 + OL)
+    return 1 / np.sqrt(OmegaM * zp1**3 + OmegaK * zp1**2 + OmegaL)
 
-def chi(z, Om, OK, OL):
-    return np.sqrt(np.abs(-OK)) * integ.quad(Einv, 0, z, args=(Om, OK, OL))[0]
+def chi(z, OmegaM, OmegaK, OmegaL):
+    return np.sqrt(np.abs(-OmegaK)) * integ.quad(Einv, 0, z, args=(OmegaM, OmegaK, OmegaL))[0]
 
-def find_d_lss(OK,H0=67.5):
+def find_d_lss(OmegaK,H0=67.5):
     """
     Calculates distance to last scattering surface for a given OmegaK. Units are in Mpc.
     """
-    c_H0 = c / H0
+    c_H0 = (c/1000) / H0 # in Mpc
     zLS = 1090
-    Om = 0.314 - 3.71 * OK
-    OL = 1 - Om - OK
+    OmegaM = 0.314 - 3.71 * OmegaK
+    OmegaL = 1 - OmegaM - OmegaK
 
-    return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(Om, OK, OL))[0]/1000
+    return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
 
-def find_upper_p(OK):
+def find_d_nc(p,OmegaK,H0=67.5,normalize=True):
+    """
+    Calculates the distance to the nearest clone for a given OmegaK and p.
+    If normalize=True, result is normalized to d_LSS. Otherwise, returned result is in Mpc.
+    """
+    c_H0 = (c/1000) / H0 # in Mpc
+    d_nc = 2*np.pi*c_H0 / (p * np.sqrt(np.abs(OmegaK)))
+
+    if normalize:
+        d_lss = find_d_lss(OmegaK)
+        return d_nc/d_lss
+    
+    else: return d_nc
+
+def get_p_from_clone_distance(OmegaK,ratio,H0=67.5):
+    """
+    Given an OmegaK, find what p will give the desired ratio of d_NC/d_LSS
+    """
+    c_H0 = (c/1000) / H0 # in Mpc
+
+    d_lss = find_d_lss(OmegaK)
+    d_nc = ratio*d_lss
+    return int(np.round(2*np.pi*c_H0 / (d_nc * np.sqrt(np.abs(OmegaK)))))
+
+def find_upper_p(OmegaK):
     """
     Determines the upper limit on p for a given OmegaK. Based on Eq. (5.3) in Paper Ic.
     """
     alpha = 0.761
-    Rc = R2omk(OK)
-    dLSS = find_d_lss(OK)/Rc # want dLSS in units of Rc
+    Rc = R2omk(OmegaK)
+    dLSS = find_d_lss(OmegaK)/Rc # want dLSS in units of Rc
 
     return (2 * np.pi * alpha / dLSS)**2

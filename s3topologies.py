@@ -98,12 +98,12 @@ class SphericalTopology():
         interp_transf = interps(self.kk) # Axis 0 has the ell's, Axis 1 has the k's
         return interp_transf
     
-    def get_kmax_from_ell_max(self):
+    def get_kmax_from_ell_max(self,verbose=True):
         import camb 
         from scipy.interpolate import CubicSpline 
         from threadpoolctl import threadpool_limits
         
-        print('Looking for optimum kmax for the given ell_max...')
+        if verbose: print('Looking for optimum kmax for the given ell_max...')
         
         # Figure out safe core count for the main thread
         slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')
@@ -155,7 +155,7 @@ class SphericalTopology():
                 else:
                     kmax2 = kmid
                 
-            print(f'Convergence reached. kmax is {kmid:1.4e}. '
+            if verbose: print(f'Convergence reached. kmax is {kmid:1.4e}. '
                   +f'This kmax will compute the Cls with an accuracy of {(1-diff)*100:2.2f}%.')
             self.kmax = kmid
 
@@ -403,10 +403,10 @@ class LensSpace(SphericalTopology):
             traceback.print_exc()
             raise e
         
-    def compute_Clmlpmp_optimized(self):
+    def compute_Clmlpmp_optimized(self,verbose=True):
         import uuid
         start = time.time()
-        print(f'Clmlpmp computation started. nmax is {self.nmax}')
+        if verbose: print(f'Clmlpmp computation started. nmax is {self.nmax}')
         num_lm = self.lmax * (self.lmax + 2) - 3
 
         if self.num_workers is not None:
@@ -438,7 +438,7 @@ class LensSpace(SphericalTopology):
         m_arr = np.array([lm[1] for lm in lm_map], dtype=np.int32)
         mm_arr = 2 * m_arr
 
-        print(f"Distributing sum in n across {num_workers} parallel CPU cores...")
+        if verbose: print(f"Distributing sum in n across {num_workers} parallel CPU cores...")
         
         init_wigner_tables(self.nmax * 2, 3)
         worker_init = init_wigner_tables
@@ -478,13 +478,15 @@ class LensSpace(SphericalTopology):
             completed_n = 0
             total_n = self.nmax-1
             
+            if not verbose: self.use_tqdm=False
+
             if not self.use_tqdm:
                 for future in concurrent.futures.as_completed(futures):
                     n_count, local_C = future.result() 
                     C_total += local_C
                     completed_n += n_count
                     percent = 100 * completed_n / total_n
-                    print(f"Progress: {completed_n}/{total_n} ({percent:.1f}%)", flush=True)
+                    if verbose: print(f"Progress: {completed_n}/{total_n} ({percent:.1f}%)", flush=True)
             else:
                 progress_bar = tqdm(
                     concurrent.futures.as_completed(futures), 
@@ -508,7 +510,7 @@ class LensSpace(SphericalTopology):
         free_wigner_tables()
 
         total_time = time.time() - start
-        print(f"Time taken: {total_time:.2f}s")
+        if verbose: print(f"Time taken: {total_time:.2f}s")
 
         C_final = self.p * 4 * pi * phase_matrix * C_total
 

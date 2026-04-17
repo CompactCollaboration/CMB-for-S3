@@ -145,7 +145,6 @@ def get_lens_distances(pmax):
 
         print(f'Finding lens distances up to pmax = {pmax}. This may take a few minutes...')
         for p in range(5, pmax + 1):
-            if p % (pmax/10) == 0: print(f'Computing p {p}/{pmax}')
 
             for q in get_unique_fast(p):
                 dmax, niter = find_dmax_fast(p, q, Nsteps=100)
@@ -156,6 +155,9 @@ def get_lens_distances(pmax):
                     print(f"Failed for {p}, {q}")
 
                 res.append({'p': p, 'q': q, 'dmax': dmax})
+            
+            ratio = p/pmax
+            if ratio*100 % 10 == 0: print(f'Computed p {p}/{pmax}. {ratio*100:.1f}% completed.')
         
         # 3. Save results
         df2 = pd.DataFrame.from_dict(res)
@@ -171,16 +173,20 @@ def Einv(z, OmegaM, OmegaK, OmegaL):
 def chi(z, OmegaM, OmegaK, OmegaL):
     return np.sqrt(np.abs(-OmegaK)) * integ.quad(Einv, 0, z, args=(OmegaM, OmegaK, OmegaL))[0]
 
-def find_d_lss(OmegaK,H0=67.5):
+def find_d_lss(OmegaK,H0=67.5,normalize=False):
     """
-    Calculates distance to last scattering surface for a given OmegaK. Units are in Mpc.
+    Calculates distance to last scattering surface for a given OmegaK.
+    If normalize=False, units are in Mpc. This is the default. Else, d_lss is normalized to Rc
     """
-    c_H0 = (c/1000) / H0 # in Mpc
     zLS = 1090
     OmegaM = 0.314 - 3.71 * OmegaK
     OmegaL = 1 - OmegaM - OmegaK
 
-    return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
+    if normalize:
+        return  2 * np.sqrt(np.abs(OmegaK)) * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
+    else:
+        c_H0 = (c/1000) / H0 # in Mpc
+        return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
 
 def find_d_nc(p,OmegaK,H0=67.5,normalize=True):
     """
@@ -211,7 +217,6 @@ def find_upper_p(OmegaK):
     Determines the upper limit on p for a given OmegaK. Based on Eq. (5.3) in Paper Ic.
     """
     alpha = 0.761
-    Rc = R2omk(OmegaK)
-    dLSS = find_d_lss(OmegaK)/Rc # want dLSS in units of Rc
+    dLSS = find_d_lss(OmegaK,normalize=True) # want dLSS in units of Rc
 
     return (2 * np.pi * alpha / dLSS)**2

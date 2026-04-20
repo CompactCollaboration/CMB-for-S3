@@ -13,12 +13,11 @@ from libc.math cimport sin, cos, log, exp, lgamma, fabs, ceil
 def get_wigner_d_matrix_optimized(int j_times_2, double beta):
     """
     Computes the Wigner d-matrix for j = j_times_2 / 2 using log-scaled 
-    Jacobi polynomials to prevent underflow at extreme n values (e.g., 3500).
+    Jacobi polynomials
     """
     cdef int size = j_times_2 + 1
     cdef double j = j_times_2 / 2.0
-    
-    # Allocate the output matrix
+
     cdef double[:, ::1] d_mat = np.zeros((size, size), dtype=np.float64)
 
     # Precompute trigonometry and logs
@@ -42,14 +41,12 @@ def get_wigner_d_matrix_optimized(int j_times_2, double beta):
 
     cdef int start_r = <int>ceil(j)
     
-    # Thread-local variables for the parallel loop
     cdef int r, c, c_start, c_end, n
     cdef double mp, m, k, a, b, log_k_fact
     cdef double log_A, log_ang, prefactor, log_rescale, total_log
     cdef double poly, p_nm1, p_nm2, n_f, ab_n, ab_2n, c1, c2, c3
     cdef double val, sign
 
-    # Parallelize over the rows using OpenMP
     for r in prange(start_r, size, nogil=True, schedule='dynamic'):
         mp = r - j
         k = j - mp
@@ -66,7 +63,7 @@ def get_wigner_d_matrix_optimized(int j_times_2, double beta):
             a = mp - m
             b = mp + m
 
-            # Compute prefactor entirely in log-space to survive massive factorials
+            # Compute prefactor entirely in log-space 
             log_A = 0.5 * (
                 log_k_fact
                 + lgamma(k + a + b + 1.0)
@@ -100,15 +97,12 @@ def get_wigner_d_matrix_optimized(int j_times_2, double beta):
                     p_nm2 = p_nm1
                     p_nm1 = poly
 
-                    # Dynamic rescaling to prevent float64 explosion
-                    # FIXED: Removed inplace operators (*=, +=) so Cython doesn't treat them as reductions
                     if fabs(poly) > HUGE_VAL:
                         poly = poly * TINY_VAL
                         p_nm1 = p_nm1 * TINY_VAL
                         p_nm2 = p_nm2 * TINY_VAL
                         log_rescale = log_rescale + LOG_HUGE_VAL
 
-            # Recombine
             total_log = log_A + log_ang + log_rescale
 
             if total_log < -100.0:
@@ -120,7 +114,6 @@ def get_wigner_d_matrix_optimized(int j_times_2, double beta):
                     sign = -1.0 if (<int>a % 2 != 0) else 1.0
                 val = sign * exp(total_log) * poly
 
-            # Populate current quadrant
             d_mat[r, c] = val
 
             # Populate symmetry quadrants

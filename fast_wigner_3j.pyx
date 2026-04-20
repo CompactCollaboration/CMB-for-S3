@@ -21,23 +21,21 @@ def free_wigner_tables():
     wig_table_free()
     wig_temp_free()
 
-# Fast vectorized calculation
+# Vectorized calculation
 def compute_wig3j_flat(int n, int[:] ell_arr_flat, int[:] mm_arr_flat, int[:] mmL_arr_flat):
     cdef int num_vals = ell_arr_flat.shape[0]
     
-    # Pre-allocate the numpy array and get a fast C-level memoryview
     cdef np.ndarray[np.float64_t, ndim=1] w3j_vals = np.empty(num_vals, dtype=np.float64)
     cdef double[:] w3j_vals_view = w3j_vals
     
     cdef int i, j3, m3, m1, m2
     
-    # RELEASE THE GIL! This loop now runs at pure C speed
     with nogil:
         for i in range(num_vals):
             # wigxjpf expects all inputs as 2*j and 2*m
             j3 = 2 * ell_arr_flat[i]
             
-            # Since mm_arr_flat and mmL_arr_flat are already 2*m (from Python), 
+            # Since mm_arr_flat and mmL_arr_flat are already 2*m  
             # we just need to handle the minus sign for m3 and standard math for m2.
             m3 = -mm_arr_flat[i]
             m1 = mmL_arr_flat[i]

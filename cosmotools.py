@@ -204,13 +204,41 @@ def find_d_nc(p,OmegaK,H0=67.5,normalize=True):
 
 def get_p_from_clone_distance(OmegaK,ratio,H0=67.5):
     """
-    Given an OmegaK, find what p will give the desired ratio of d_NC/d_LSS
+    Given an OmegaK, find what lens space L(p,1) will give the desired ratio of d_NC/d_LSS
     """
     c_H0 = (c/1000) / H0 # in Mpc
 
     d_lss = find_d_lss(OmegaK)
     d_nc = ratio*d_lss
     return int(np.round(2*np.pi*c_H0 / (d_nc * np.sqrt(np.abs(OmegaK)))))
+
+def get_omk_from_clone_distance(p,ratio,tol = 0.01, H0=67.5):
+    """
+    Given a lens space L(p,1), find what OmegaK will give the desired ratio of d_NC/d_LSS
+    """
+
+    omk1 = -1e-6
+    omk2 = -1e-1
+    omk_guess = np.mean([omk1,omk2])
+    guess_ratio = find_d_nc(p,omk_guess,normalize=True)
+    limit = int(np.abs(np.log10(tol)))
+    condition = np.round(guess_ratio,limit) == ratio
+
+    while not condition:
+        # print(omk1,omk2,omk_guess,guess_ratio)
+        if guess_ratio < ratio:
+            omk2 = omk_guess
+        else:
+            omk1 = omk_guess
+        
+        omk_guess = np.mean([omk1,omk2])
+        guess_ratio = find_d_nc(p,omk_guess,normalize=True)
+        limit = int(np.abs(np.log10(tol)))
+        condition = np.round(guess_ratio,limit) == ratio
+
+    return omk_guess
+
+
 
 def find_upper_p(OmegaK):
     """

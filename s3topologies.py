@@ -537,14 +537,19 @@ class LensSpace(SphericalTopology):
         else:
             return self.C_matrix[idx_start:idx_end+1,idx_start:idx_end+1]
 
-    def compute_KL(self,s3_omk=None):
+    def compute_KL(self,s3_omk=None,lmin=None,lmax=None):
 
         if self.norm_C_matrix is None:
             print('Compute Clmlpmp first')
             return -1
         
+        if lmin is None:
+            lmin = 2
+        if lmax is None:
+            lmax = self.lmax
+        
         if s3_omk is None:
-            KL_matrix = self.norm_C_matrix
+            KL_matrix = self.get_C_matrix(norm=True,lmin=lmin,lmax=lmax)
         else:
             s3_params = self.params.copy()
             s3_params['OmegaK'] = s3_omk
@@ -552,7 +557,11 @@ class LensSpace(SphericalTopology):
             s3_space = S3(s3_params)
             s3_cls = s3_space.get_manual_Cls()
             tiled_s3_cls = np.repeat(s3_cls, 2 * np.arange(2, self.lmax + 1) + 1)
-            KL_matrix = self.C_matrix / tiled_s3_cls
+            idx_start = nindex(l=lmin, m=-lmin)
+            idx_end = nindex(l=lmax, m=lmax)
+            sliced_C_matrix = self.get_C_matrix(norm=False, lmin=lmin, lmax=lmax)
+            sliced_tiled_s3 = tiled_s3_cls[idx_start:idx_end+1]
+            KL_matrix = sliced_C_matrix / sliced_tiled_s3
         
         lams = np.linalg.eigvals(KL_matrix)
         forward_KL = 0

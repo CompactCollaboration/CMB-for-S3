@@ -537,20 +537,30 @@ class LensSpace(SphericalTopology):
         else:
             return self.C_matrix[idx_start:idx_end+1,idx_start:idx_end+1]
 
-    def compute_KL(self):
+    def compute_KL(self,s3_omk=None):
 
         if self.norm_C_matrix is None:
             print('Compute Clmlpmp first')
             return -1
         
+        if s3_omk is None:
+            KL_matrix = self.norm_C_matrix
         else:
-            lams = np.linalg.eigvals(self.norm_C_matrix)
-            forward_KL = 0
-            backward_KL = 0
-            for lam in lams:
-                forward_KL += (lam-np.log(lam)-1)
-                backward_KL += (1.0/lam+np.log(lam)-1)
-            return np.array([np.real(forward_KL),np.real(backward_KL)])
+            s3_params = self.params.copy()
+            s3_params['OmegaK'] = s3_omk
+            s3_params['verbose'] = False
+            s3_space = S3(s3_params)
+            s3_cls = s3_space.get_manual_Cls()
+            tiled_s3_cls = np.repeat(s3_cls, 2 * np.arange(2, self.lmax + 1) + 1)
+            KL_matrix = self.C_matrix / tiled_s3_cls
+        
+        lams = np.linalg.eigvals(KL_matrix)
+        forward_KL = 0
+        backward_KL = 0
+        for lam in lams:
+            forward_KL += (lam-np.log(lam)-1)
+            backward_KL += (1.0/lam+np.log(lam)-1)
+        return np.array([np.real(forward_KL),np.real(backward_KL)])
 
 
     def plot_Clmlpmp(self, filename=None):

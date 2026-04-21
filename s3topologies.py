@@ -405,7 +405,7 @@ class LensSpace(SphericalTopology):
             raise e
         
     def compute_Clmlpmp_optimized(self):
-        import uuid
+        
         start = time.time()
         if self.verbose: print(f'Clmlpmp computation started. nmax is {self.nmax}')
         num_lm = self.lmax * (self.lmax + 2) - 3

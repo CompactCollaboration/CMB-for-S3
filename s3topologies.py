@@ -80,7 +80,7 @@ class SphericalTopology():
         qs = np.sqrt(self.kk**2 - self.K)
         return self.cambpars.scalar_power(qs) * (self.kk**2) / qs**2
 
-    def transfer_functions(self):
+    def transfer_functions(self, onlyTT=True):
         import camb 
         from scipy.interpolate import CubicSpline 
 
@@ -90,14 +90,23 @@ class SphericalTopology():
         k_list = np.array(transfer_function.q)
         ell_list = np.array(transfer_function.L)[: self.lmax - 1] #Has size lmax-1
 
-        interps = CubicSpline(
+        interps_T = CubicSpline(
             k_list,
             transfer_data[0, :ell_list.shape[0], :],
             axis=1,
         )
+        interp_transf_T = interps_T(self.kk) # Axis 0 has the ell's, Axis 1 has the k's
 
-        interp_transf = interps(self.kk) # Axis 0 has the ell's, Axis 1 has the k's
-        return interp_transf
+        if onlyTT:
+            return interp_transf_T
+        else:
+            interps_E = CubicSpline(
+                k_list,
+                transfer_data[1, :ell_list.shape[0], :],
+                axis=1,
+            )
+            interp_transf_E = interps_E(self.kk)
+            return interp_transf_T, interp_transf_E
     
     def get_kmax_from_ell_max(self):
         import camb 
@@ -219,13 +228,13 @@ class LensSpace(SphericalTopology):
                 
     
     def _compute_n_batch(self, n_list, num_lm, ell_arr, mm_arr,
-                          transfer_funcs, power_spectrum, threads_per_worker):
+                          transfer_funcs, power_spectrum, threads_per_worker,onlyTT=True):
         import traceback
         try:
                
             with threadpool_limits(limits=threads_per_worker):
-
-                C_local= np.zeros((num_lm, num_lm), dtype=np.complex128)
+                N_fields = 1 if onlyTT else 2
+                C_local= np.zeros((N_fields*num_lm, N_fields*num_lm), dtype=np.complex128)
 
                 CHUNK_SIZE = 50000
 
@@ -241,12 +250,17 @@ class LensSpace(SphericalTopology):
                     mmR_all = (2 * pairs[:, 1]).astype(np.int32)
                     num_pairs = len(mmL_all)
 
-                    valid_ell_mask = (ell_arr >= 2) & (ell_arr <= n) & ((ell_arr - 2) < transfer_funcs.shape[0]) #transfer_funcs.shape[0] is lmax-1, this is saying ell<lmax+1
+                    valid_ell_mask = (ell_arr >= 2) & (ell_arr <= n) & ((ell_arr - 2) < (transfer_funcs.shape[1] if not onlyTT else transfer_funcs.shape[0])) #transfer_funcs.shape[0] is lmax-1, this is saying ell<lmax+1
                     valid_i_global = np.where(valid_ell_mask)[0]
                     
                     mm_valid = mm_arr[valid_i_global]
                     ell_valid = ell_arr[valid_i_global]
-                    delta_valid = np.ascontiguousarray(transfer_funcs[ell_valid - 2, n_idx])
+
+                    if onlyTT:
+                        delta_valid = np.ascontiguousarray(transfer_funcs[ell_valid - 2, n_idx])
+                    else:
+                        delta_valid_T = np.ascontiguousarray(transfer_funcs[0, ell_valid - 2, n_idx])
+                        delta_valid_E = np.ascontiguousarray(transfer_funcs[1, ell_valid - 2, n_idx])
 
                     if self.chi0 == 0:
                         
@@ -312,18 +326,28 @@ class LensSpace(SphericalTopology):
 
                             w3j_vals = w3j_unique[inverse_indices] * total_phase
                             
-                            values = delta_valid[final_i] * w3j_vals
-                            valid_indices = (valid_i_global[final_i], final_k)
+                            if onlyTT:
+                                values = delta_valid[final_i] * w3j_vals
+                                valid_indices = (valid_i_global[final_i], final_k)
+                                V_coo = coo_matrix((values.astype(np.complex128), valid_indices), 
+                                                    shape=(num_lm, chunk_pairs_len), dtype=np.complex128)
+                                V_csr = V_coo.tocsr()
+                                C_local += prefactor * (V_csr @ V_csr.conj().T).toarray()
+                            else:
+                                values_T = delta_valid_T[final_i] * w3j_vals
+                                values_E = delta_valid_E[final_i] * w3j_vals
+                                
+                                row_idx_T = valid_i_global[final_i]
+                                row_idx_E = valid_i_global[final_i] + num_lm
 
-                            # generate sparse matrix
-                            V_coo = coo_matrix((values.astype(np.complex128), 
-                                                valid_indices), 
-                                                shape=(num_lm,chunk_pairs_len), 
-                                                dtype=np.complex128)
+                                values_joint = np.concatenate([values_T, values_E])
+                                row_joint = np.concatenate([row_idx_T, row_idx_E])
+                                col_joint = np.concatenate([final_k, final_k])
 
-                            V_csr = V_coo.tocsr()
-                            result_sparse = V_csr @ V_csr.conj().T
-                            C_local += prefactor * result_sparse.toarray()
+                                Z_coo = coo_matrix((values_joint.astype(np.complex128), (row_joint, col_joint)), 
+                                                    shape=(2*num_lm, chunk_pairs_len), dtype=np.complex128)
+                                Z_csr = Z_coo.tocsr()
+                                C_local += prefactor * (Z_csr @ Z_csr.conj().T).toarray()
 
                     else:
                         small_d = get_wigner_d_matrix_optimized(n, 2 * self.chi0)
@@ -392,10 +416,17 @@ class LensSpace(SphericalTopology):
 
                             w3j_vals = w3j_unique[inverse_indices] * total_phase
 
-                            V_chunk = np.zeros((num_lm, chunk_pairs_len), dtype=np.complex128)
-                            V_chunk[valid_i_global[final_i], final_k] = delta_valid[final_i] * w3j_vals * flat_d
+                            common_term = w3j_vals * flat_d
 
-                            C_local += (prefactor * (V_chunk @ V_chunk.conj().T))
+                            if onlyTT:
+                                V_chunk = np.zeros((num_lm, chunk_pairs_len), dtype=np.complex128)
+                                V_chunk[valid_i_global[final_i], final_k] = delta_valid[final_i] * common_term
+                                C_local += (prefactor * (V_chunk @ V_chunk.conj().T))
+                            else:
+                                Z_chunk = np.zeros((2*num_lm, chunk_pairs_len), dtype=np.complex128)
+                                Z_chunk[valid_i_global[final_i], final_k] = delta_valid_T[final_i] * common_term
+                                Z_chunk[valid_i_global[final_i] + num_lm, final_k] = delta_valid_E[final_i] * common_term
+                                C_local += (prefactor * (Z_chunk @ Z_chunk.conj().T))
                           
             return len(n_list), C_local
         
@@ -404,7 +435,7 @@ class LensSpace(SphericalTopology):
             traceback.print_exc()
             raise e
         
-    def compute_Clmlpmp_optimized(self):
+    def compute_Clmlpmp_optimized(self, onlyTT=True):
         
         start = time.time()
         if self.verbose: print(f'Clmlpmp computation started. nmax is {self.nmax}')
@@ -431,7 +462,13 @@ class LensSpace(SphericalTopology):
 
         with threadpool_limits(limits=total_pool):
             power_spectrum = self.primpower()
-            transfer_funcs = self.transfer_functions()
+            if onlyTT:
+                transfer_funcs = self.transfer_functions(onlyTT=True)
+                N_fields = 1
+            else:
+                transf_T, transf_E = self.transfer_functions(onlyTT=False)
+                transfer_funcs = np.stack([transf_T, transf_E], axis=0)
+                N_fields = 2
 
         lm_map = np.array([lmindex(i) for i in range(num_lm)])
 
@@ -459,7 +496,7 @@ class LensSpace(SphericalTopology):
 
         n_batches = [batch for batch in n_batches if len(batch) > 0]  
 
-        C_total = np.zeros((num_lm,num_lm),dtype=np.complex128)
+        C_total = np.zeros((N_fields * num_lm, N_fields * num_lm), dtype=np.complex128)
 
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=num_workers,
@@ -471,7 +508,7 @@ class LensSpace(SphericalTopology):
                 executor.submit(
                     self._compute_n_batch, 
                     batch, num_lm, ell_arr, mm_arr,
-                    transfer_funcs, power_spectrum, threads_per_worker
+                    transfer_funcs, power_spectrum, threads_per_worker, onlyTT
                 )
                 for batch in n_batches
             ]
@@ -508,6 +545,12 @@ class LensSpace(SphericalTopology):
             
         phase_matrix=np.outer(v,np.conj(v))
 
+        if not onlyTT:
+            phase_matrix = np.block([
+                [phase_matrix, phase_matrix],
+                [phase_matrix, phase_matrix]
+            ])
+
         free_wigner_tables()
 
         total_time = time.time() - start
@@ -517,59 +560,112 @@ class LensSpace(SphericalTopology):
 
         self.C_matrix = C_final
 
-        transfer_squared = transfer_funcs**2
-        Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
-        tiled_Cells=np.repeat(Cells,2*np.arange(2,self.lmax+1)+1)
-        sqrtClClp = np.sqrt(np.outer(tiled_Cells,tiled_Cells))
+        if onlyTT:
+            transfer_squared = transfer_funcs**2
+            Cells = 4*pi*transfer_squared @ (power_spectrum/np.arange(3,self.nmax+2))
+            tiled_Cells = np.repeat(Cells, 2*np.arange(2,self.lmax+1)+1)
+            sqrtClClp = np.sqrt(np.outer(tiled_Cells, tiled_Cells))
+        else:
+            transfer_squared_T = transfer_funcs[0]**2
+            transfer_squared_E = transfer_funcs[1]**2
+            
+            Cells_TT = 4*pi*transfer_squared_T @ (power_spectrum/np.arange(3,self.nmax+2))
+            Cells_EE = 4*pi*transfer_squared_E @ (power_spectrum/np.arange(3,self.nmax+2))
+            
+            tiled_TT = np.repeat(Cells_TT, 2*np.arange(2,self.lmax+1)+1)
+            tiled_EE = np.repeat(Cells_EE, 2*np.arange(2,self.lmax+1)+1)
+            
+            tiled_joint = np.concatenate([tiled_TT, tiled_EE])
+            sqrtClClp = np.sqrt(np.outer(tiled_joint, tiled_joint))
 
         self.norm_C_matrix = C_final/sqrtClClp
 
-    def get_C_matrix(self,norm=True,lmin=2,lmax=10):
-
+    def get_C_matrix(self, norm=True, lmin=2, lmax=10):
         if self.C_matrix is None:
             print('Compute Clmlpmp first')
             return -1
         
-        idx_start = nindex(l=lmin,m=-lmin)
-        idx_end = nindex(l=lmax,m=lmax)
-        if norm:
-            return self.norm_C_matrix[idx_start:idx_end+1,idx_start:idx_end+1]
+        num_lm = self.lmax * (self.lmax + 2) - 3
+        idx_start = nindex(l=lmin, m=-lmin)
+        idx_end = nindex(l=lmax, m=lmax)
+        
+        is_joint = (self.C_matrix.shape[0] == 2 * num_lm)
+        matrix = self.norm_C_matrix if norm else self.C_matrix
+        
+        if is_joint:
+            indices = np.concatenate([
+                np.arange(idx_start, idx_end + 1),
+                np.arange(idx_start, idx_end + 1) + num_lm
+            ])
+            return matrix[np.ix_(indices, indices)]
         else:
-            return self.C_matrix[idx_start:idx_end+1,idx_start:idx_end+1]
+            return matrix[idx_start:idx_end+1, idx_start:idx_end+1]
 
-    def compute_KL(self,s3_omk=None,lmin=None,lmax=None):
+    def compute_KL(self, s3_omk=None, lmin=None, lmax=None):
 
         if self.norm_C_matrix is None:
             print('Compute Clmlpmp first')
             return -1
         
-        if lmin is None:
-            lmin = 2
-        if lmax is None:
-            lmax = self.lmax
+        if lmin is None: lmin = 2
+        if lmax is None: lmax = self.lmax
         
-        if s3_omk is None:
-            KL_matrix = self.get_C_matrix(norm=True,lmin=lmin,lmax=lmax)
-        else:
-            s3_params = self.params.copy()
+        num_lm = self.lmax * (self.lmax + 2) - 3
+        is_joint = (self.C_matrix.shape[0] == 2 * num_lm)
+        
+        s3_params = self.params.copy()
+        if s3_omk is not None:
             s3_params['OmegaK'] = s3_omk
-            s3_params['verbose'] = False
-            s3_space = S3(s3_params)
-            s3_cls = s3_space.get_manual_Cls()
-            tiled_s3_cls = np.repeat(s3_cls, 2 * np.arange(2, self.lmax + 1) + 1)
-            idx_start = nindex(l=lmin, m=-lmin)
-            idx_end = nindex(l=lmax, m=lmax)
-            sliced_C_matrix = self.get_C_matrix(norm=False, lmin=lmin, lmax=lmax)
-            sliced_tiled_s3 = tiled_s3_cls[idx_start:idx_end+1]
-            KL_matrix = sliced_C_matrix / sliced_tiled_s3
+        s3_params['verbose'] = False
+        s3_space = S3(s3_params)
         
+        power = s3_space.primpower()
+        n_arr = np.arange(3, s3_space.nmax+2)
+        
+        idx_start = nindex(l=lmin, m=-lmin)
+        idx_end = nindex(l=lmax, m=lmax)
+        sliced_C_matrix = self.get_C_matrix(norm=False, lmin=lmin, lmax=lmax)
+
+        if not is_joint:
+            transf_T = s3_space.transfer_functions(onlyTT=True)
+            s3_TT = 4*pi*(transf_T**2) @ (power/n_arr)
+            tiled_s3 = np.repeat(s3_TT, 2 * np.arange(2, self.lmax + 1) + 1)
+            
+            slice_TT = tiled_s3[idx_start:idx_end+1]
+            KL_matrix =  sliced_C_matrix @ np.diag(1.0 / slice_TT)
+            
+        else:
+            transf_T, transf_E = s3_space.transfer_functions(onlyTT=False)
+            
+            s3_TT = 4*pi*(transf_T**2) @ (power/n_arr)
+            s3_EE = 4*pi*(transf_E**2) @ (power/n_arr)
+            s3_TE = 4*pi*(transf_T * transf_E) @ (power/n_arr)
+            
+            counts = 2 * np.arange(2, self.lmax + 1) + 1
+            tiled_TT = np.repeat(s3_TT, counts)
+            tiled_EE = np.repeat(s3_EE, counts)
+            tiled_TE = np.repeat(s3_TE, counts)
+            
+            slice_TT = tiled_TT[idx_start:idx_end+1]
+            slice_EE = tiled_EE[idx_start:idx_end+1]
+            slice_TE = tiled_TE[idx_start:idx_end+1]
+            
+            S3_cov_sliced = np.block([
+                [np.diag(slice_TT), np.diag(slice_TE)],
+                [np.diag(slice_TE), np.diag(slice_EE)]
+            ])
+            
+            KL_matrix = sliced_C_matrix @ np.linalg.inv(S3_cov_sliced)
+
         lams = np.linalg.eigvals(KL_matrix)
         forward_KL = 0
         backward_KL = 0
+        
         for lam in lams:
-            forward_KL += (lam-np.log(lam)-1)
-            backward_KL += (1.0/lam+np.log(lam)-1)
-        return np.array([np.real(forward_KL),np.real(backward_KL)])
+            forward_KL += (lam - np.log(lam) - 1)
+            backward_KL += (1.0/lam + np.log(lam) - 1)
+            
+        return np.array([np.real(forward_KL), np.real(backward_KL)])
 
 
     def plot_Clmlpmp(self, filename=None):
@@ -616,17 +712,19 @@ class LensSpace(SphericalTopology):
             'savefig.pad_inches': 0.1
         })
         
-        plt.figure(figsize=(6,6))
-    
-        cmap = plt.cm.inferno.copy()
-        cmap.set_bad(color='black')
-        boundaries = np.cumsum(2*np.arange(2,self.lmax+1)+1) - 0.5
-
         if self.norm_C_matrix is None:
             print('Compute Clmlpmp first')
             return -1
+
+        num_lm = self.lmax * (self.lmax + 2) - 3
+        is_joint = (self.C_matrix.shape[0] == 2 * num_lm)
         
-        plt.imshow(np.log10(np.abs(self.norm_C_matrix)),cmap=cmap,vmin=-8,origin='lower')
+        plt.figure(figsize=(8,8) if is_joint else (6,6))
+    
+        cmap = plt.cm.inferno.copy()
+        cmap.set_bad(color='black')
+
+        plt.imshow(np.log10(np.abs(self.norm_C_matrix)), cmap=cmap, vmin=-8, origin='lower')
 
         ells = np.arange(2, self.lmax + 1)
         counts = 2 * ells + 1
@@ -638,20 +736,51 @@ class LensSpace(SphericalTopology):
         internal_boundaries = boundaries[:-1]
         N = boundaries[-1] + 0.5 
         
-        plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
-        plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
-
         ax = plt.gca()
-        
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels([f'${ell}$' for ell in ells], rotation=0)
-        ax.set_xlabel(r'$\ell^\prime$', fontsize=14)
-        
-        ax.set_yticks(tick_positions)
-        ax.set_yticklabels([f'${ell}$' for ell in ells])
-        ax.set_ylabel(r'$\ell$', fontsize=14)
 
-        plt.colorbar()
+        if is_joint:
+
+            all_tick_positions = np.concatenate([tick_positions, tick_positions + num_lm])
+            tick_labels = [f'${ell}$' for ell in ells] * 2
+
+            all_boundaries = np.concatenate([
+                internal_boundaries, 
+                [N - 0.5], 
+                internal_boundaries + num_lm
+            ])
+            
+            plt.vlines(all_boundaries, ymin=-0.5, ymax=2*N-0.5, colors='white', linewidth=0.3, alpha=0.3)
+            plt.hlines(all_boundaries, xmin=-0.5, xmax=2*N-0.5, colors='white', linewidth=0.3, alpha=0.3)
+
+            plt.axvline(x=num_lm - 0.5, color='white', linewidth=0.8, alpha=0.8)
+            plt.axhline(y=num_lm - 0.5, color='white', linewidth=0.8, alpha=0.8)
+            
+            ax.set_xticks(all_tick_positions)
+            ax.set_xticklabels(tick_labels, rotation=0)
+            ax.set_yticks(all_tick_positions)
+            ax.set_yticklabels(tick_labels)
+
+            ax.annotate('T', xy=(0.25, -0.05), xycoords='axes fraction', fontsize=16, ha='center', va='top', annotation_clip=False)
+            ax.annotate('E', xy=(0.75, -0.05), xycoords='axes fraction', fontsize=16, ha='center', va='top', annotation_clip=False)
+
+            ax.annotate('T', xy=(-0.05, 0.25), xycoords='axes fraction', fontsize=16, ha='right', va='center', annotation_clip=False)
+            ax.annotate('E', xy=(-0.05, 0.75), xycoords='axes fraction', fontsize=16, ha='right', va='center', annotation_clip=False)
+            
+        else:
+            plt.vlines(internal_boundaries, ymin=-0.5, ymax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+            plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
+            
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels([f'${ell}$' for ell in ells], rotation=0)
+            ax.set_yticks(tick_positions)
+            ax.set_yticklabels([f'${ell}$' for ell in ells])
+
+        label_pad = 15 if is_joint else 10
+        ax.set_xlabel(r'$\ell^\prime$', fontsize=14, labelpad=label_pad)
+        ax.set_ylabel(r'$\ell$', fontsize=14, labelpad=label_pad, rotation=0)
+
+        plt.colorbar(fraction=0.046, pad=0.04)
         plt.title(f' L({self.p},{self.q}) \n'+r'$\Omega_K$='+f'{self.OmegaK:.4f} // '+r'$(\theta_0,\chi_0,\varphi_0)=$'+f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})',fontsize=12)
+        
         if filename is not None:
             plt.savefig(filename)

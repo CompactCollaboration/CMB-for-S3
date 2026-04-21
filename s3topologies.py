@@ -106,7 +106,8 @@ class SphericalTopology():
                 axis=1,
             )
             interp_transf_E = interps_E(self.kk)
-            return interp_transf_T, interp_transf_E
+            spin2_prefactor = np.sqrt(ell_list*(ell_list+1)*(ell_list-1)*(ell_list+2))
+            return interp_transf_T, interp_transf_E*spin2_prefactor[:,np.newaxis]
     
     def get_kmax_from_ell_max(self):
         import camb 

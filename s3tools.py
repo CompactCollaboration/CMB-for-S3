@@ -44,6 +44,21 @@ def lmindex(n, lmin=2):
 def nindex(l, m, lmin=2):
     return l * (l + 1) - lmin**2 + m
 
+def get_m_ordering_indices(lmax, lmin=2, positive_m_only=False):
+    """Returns the indices required to reorder an (l,m) array into (m,l) ordering."""
+    num_lm = lmax * (lmax + 2) - (lmin**2 - 1)
+    
+    lm_tuples = []
+    for i in range(num_lm):
+        l, m = lmindex(i, lmin=lmin)
+        if positive_m_only and m < 0:
+            continue
+        lm_tuples.append((l, m, i))
+        
+    lm_tuples.sort(key=lambda x: (x[1], x[0]))
+    
+    return np.array([x[2] for x in lm_tuples])
+
 def primpower(k, omk, As=2.1e-9, ns=0.965):
     import camb 
     

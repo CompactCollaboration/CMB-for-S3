@@ -656,7 +656,7 @@ class LensSpace(SphericalTopology):
                 [np.diag(slice_TE), np.diag(slice_EE)]
             ])
             
-            KL_matrix = sliced_C_matrix @ np.linalg.inv(S3_cov_sliced)
+            KL_matrix = np.linalg.solve(S3_cov_sliced,sliced_C_matrix)
 
         lams = np.linalg.eigvals(KL_matrix)
         forward_KL = 0

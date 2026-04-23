@@ -106,7 +106,8 @@ class SphericalTopology():
                 axis=1,
             )
             interp_transf_E = interps_E(self.kk)
-            return interp_transf_T, interp_transf_E
+            spin2_prefactor = np.sqrt(ell_list*(ell_list+1)*(ell_list-1)*(ell_list+2))
+            return interp_transf_T, interp_transf_E*spin2_prefactor[:,np.newaxis]
     
     def get_kmax_from_ell_max(self):
         import camb 
@@ -655,7 +656,7 @@ class LensSpace(SphericalTopology):
                 [np.diag(slice_TE), np.diag(slice_EE)]
             ])
             
-            KL_matrix = sliced_C_matrix @ np.linalg.inv(S3_cov_sliced)
+            KL_matrix = np.linalg.solve(S3_cov_sliced,sliced_C_matrix)
 
         lams = np.linalg.eigvals(KL_matrix)
         forward_KL = 0
@@ -668,7 +669,7 @@ class LensSpace(SphericalTopology):
         return np.array([np.real(forward_KL), np.real(backward_KL)])
 
 
-    def plot_Clmlpmp(self, filename=None):
+    def plot_Clmlpmp(self, filename=None, m_ordering=False, positive_m_only=False):
         from matplotlib import pyplot as plt 
 
         plt.rcParams.update({
@@ -685,30 +686,29 @@ class LensSpace(SphericalTopology):
             'ytick.labelsize': 12,
             'legend.fontsize': 11,
             
-            
-            'axes.linewidth': 1.2,          # Slightly thicker bounding box
-            'xtick.direction': 'in',        # Ticks point INWARD
+            'axes.linewidth': 1.2,          
+            'xtick.direction': 'in',        
             'ytick.direction': 'in',
-            'xtick.top': True,              # Ticks on the top edge
-            'ytick.right': True,            # Ticks on the right edge
-            'xtick.minor.visible': False,    # Minor ticks are standard in astrophysics
+            'xtick.top': True,              
+            'ytick.right': True,            
+            'xtick.minor.visible': False,    
             'ytick.minor.visible': False,
-            'xtick.major.size': 6,          # Major tick length
-            'xtick.minor.size': 3,          # Minor tick length
+            'xtick.major.size': 6,          
+            'xtick.minor.size': 3,          
             'ytick.major.size': 6,
             'ytick.minor.size': 3,
-            'xtick.major.width': 1.0,       # Tick thicknesses
+            'xtick.major.width': 1.0,       
             'ytick.major.width': 1.0,
             
             # 4. Lines and Legend
-            'lines.linewidth': 1.5,         # Thick enough to see, thin enough to be precise
+            'lines.linewidth': 1.5,         
             'legend.frameon': True,        
             'legend.loc': 'best',
             
             # 5. Figure Output
-            'figure.figsize': (5.0, 5.0),   # Standard aspect ratio for a single column
+            'figure.figsize': (5.0, 5.0),   
             'figure.dpi': 150,              
-            'savefig.bbox': 'tight',        # Prevents labels from getting cut off
+            'savefig.bbox': 'tight',        
             'savefig.pad_inches': 0.1
         })
         
@@ -719,15 +719,44 @@ class LensSpace(SphericalTopology):
         num_lm = self.lmax * (self.lmax + 2) - 3
         is_joint = (self.C_matrix.shape[0] == 2 * num_lm)
         
+        matrix_to_plot = self.norm_C_matrix.copy()
+
+        if m_ordering:
+            m_idx = get_m_ordering_indices(self.lmax, lmin=2, positive_m_only=positive_m_only)
+            
+            if is_joint:
+                all_idx = np.concatenate([m_idx, m_idx + num_lm])
+                matrix_to_plot = matrix_to_plot[np.ix_(all_idx, all_idx)]
+            else:
+                matrix_to_plot = matrix_to_plot[np.ix_(m_idx, m_idx)]
+                
+            start_m = 0 if positive_m_only else -self.lmax
+            ms = np.arange(start_m, self.lmax + 1)
+
+            counts = np.array([self.lmax - max(2, abs(m)) + 1 for m in ms])
+            
+            valid_ms = counts > 0
+            block_labels = ms[valid_ms]
+            counts = counts[valid_ms]
+            
+            str_labels = [f'${m}$' for m in block_labels]
+            xlabel_str = r'$m^\prime$'
+            ylabel_str = r'$m$'
+        else:
+            ells = np.arange(2, self.lmax + 1)
+            counts = 2 * ells + 1
+            
+            str_labels = [f'${ell}$' for ell in ells]
+            xlabel_str = r'$\ell^\prime$'
+            ylabel_str = r'$\ell$'
+
         plt.figure(figsize=(8,8) if is_joint else (6,6))
     
         cmap = plt.cm.inferno.copy()
         cmap.set_bad(color='black')
 
-        plt.imshow(np.log10(np.abs(self.norm_C_matrix)), cmap=cmap, vmin=-8, origin='lower')
+        plt.imshow(np.log10(np.abs(matrix_to_plot)), cmap=cmap, vmin=-8, origin='lower')
 
-        ells = np.arange(2, self.lmax + 1)
-        counts = 2 * ells + 1
         block_ends = np.cumsum(counts)
         start_indices = np.concatenate(([0], block_ends[:-1]))
         tick_positions = start_indices + counts / 2.0 - 0.5
@@ -739,26 +768,27 @@ class LensSpace(SphericalTopology):
         ax = plt.gca()
 
         if is_joint:
-
-            all_tick_positions = np.concatenate([tick_positions, tick_positions + num_lm])
-            tick_labels = [f'${ell}$' for ell in ells] * 2
+            field_size = len(matrix_to_plot) // 2
+            
+            all_tick_positions = np.concatenate([tick_positions, tick_positions + field_size])
+            tick_labels_joint = str_labels * 2
 
             all_boundaries = np.concatenate([
                 internal_boundaries, 
                 [N - 0.5], 
-                internal_boundaries + num_lm
+                internal_boundaries + field_size
             ])
             
             plt.vlines(all_boundaries, ymin=-0.5, ymax=2*N-0.5, colors='white', linewidth=0.3, alpha=0.3)
             plt.hlines(all_boundaries, xmin=-0.5, xmax=2*N-0.5, colors='white', linewidth=0.3, alpha=0.3)
 
-            plt.axvline(x=num_lm - 0.5, color='white', linewidth=0.8, alpha=0.8)
-            plt.axhline(y=num_lm - 0.5, color='white', linewidth=0.8, alpha=0.8)
+            plt.axvline(x=field_size - 0.5, color='white', linewidth=0.8, alpha=0.8)
+            plt.axhline(y=field_size - 0.5, color='white', linewidth=0.8, alpha=0.8)
             
             ax.set_xticks(all_tick_positions)
-            ax.set_xticklabels(tick_labels, rotation=0)
+            ax.set_xticklabels(tick_labels_joint, rotation=0)
             ax.set_yticks(all_tick_positions)
-            ax.set_yticklabels(tick_labels)
+            ax.set_yticklabels(tick_labels_joint)
 
             ax.annotate('T', xy=(0.25, -0.05), xycoords='axes fraction', fontsize=16, ha='center', va='top', annotation_clip=False)
             ax.annotate('E', xy=(0.75, -0.05), xycoords='axes fraction', fontsize=16, ha='center', va='top', annotation_clip=False)
@@ -771,13 +801,13 @@ class LensSpace(SphericalTopology):
             plt.hlines(internal_boundaries, xmin=-0.5, xmax=N-0.5, colors='white', linewidth=0.5, alpha=0.5)
             
             ax.set_xticks(tick_positions)
-            ax.set_xticklabels([f'${ell}$' for ell in ells], rotation=0)
+            ax.set_xticklabels(str_labels, rotation=0)
             ax.set_yticks(tick_positions)
-            ax.set_yticklabels([f'${ell}$' for ell in ells])
+            ax.set_yticklabels(str_labels)
 
         label_pad = 15 if is_joint else 10
-        ax.set_xlabel(r'$\ell^\prime$', fontsize=14, labelpad=label_pad)
-        ax.set_ylabel(r'$\ell$', fontsize=14, labelpad=label_pad, rotation=0)
+        ax.set_xlabel(xlabel_str, fontsize=14, labelpad=label_pad)
+        ax.set_ylabel(ylabel_str, fontsize=14, labelpad=label_pad, rotation=0)
 
         plt.colorbar(fraction=0.046, pad=0.04)
         plt.title(f' L({self.p},{self.q}) \n'+r'$\Omega_K$='+f'{self.OmegaK:.4f} // '+r'$(\theta_0,\chi_0,\varphi_0)=$'+f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})',fontsize=12)

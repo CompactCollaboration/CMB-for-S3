@@ -30,7 +30,7 @@ class SphericalTopology_params():
         self.batchsize = self.params['batchsize']
 
         # here, we want the params that give us the largest nmax
-        self.OmegaK_opt = np.min(self.OmegaK)
+        self.OmegaK_opt = np.max(self.OmegaK)
         self.Rc_opt = np.max(self.Rc)
         self.K_opt = np.min(self.K)
 

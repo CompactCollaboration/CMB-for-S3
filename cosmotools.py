@@ -188,19 +188,34 @@ def find_d_lss(OmegaK,H0=67.5,normalize=False):
         c_H0 = (c/1000) / H0 # in Mpc
         return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
 
-def find_d_nc(p,OmegaK,H0=67.5,normalize=True):
+def find_d_nc(p,q,OmegaK,chi0=0,H0=67.5,normalize=True):
     """
     Calculates the distance to the nearest clone for a given OmegaK and p.
     If normalize=True, result is normalized to d_LSS. Otherwise, returned result is in Mpc.
     """
     c_H0 = (c/1000) / H0 # in Mpc
-    d_nc = 2*np.pi*c_H0 / (p * np.sqrt(np.abs(OmegaK)))
+    Rc = c_H0/np.sqrt(np.abs(OmegaK))
+
+    if q == 1:
+        d_nc = 2*np.pi*Rc / p
+
+    else:
+        d = np.zeros(p-1)
+        s = np.cos(chi0)**2
+
+        for j in range(1,p):
+            
+            d[j-1] = np.arccos(s*np.cos(2*np.pi*j/p)+(1-s)*np.cos(2*np.pi*j*q/p))
+        d_nc = np.min(d)*Rc
 
     if normalize:
         d_lss = find_d_lss(OmegaK)
         return d_nc/d_lss
-    
+        
     else: return d_nc
+
+
+
 
 def get_p_from_clone_distance(OmegaK,ratio,H0=67.5):
     """

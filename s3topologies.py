@@ -671,6 +671,7 @@ class LensSpace(SphericalTopology):
 
     def plot_Clmlpmp(self, filename=None, m_ordering=False, positive_m_only=False):
         from matplotlib import pyplot as plt 
+        import matplotlib.ticker as ticker
 
         plt.rcParams.update({
             # 1. LaTeX and Fonts
@@ -809,8 +810,19 @@ class LensSpace(SphericalTopology):
         ax.set_xlabel(xlabel_str, fontsize=14, labelpad=label_pad)
         ax.set_ylabel(ylabel_str, fontsize=14, labelpad=label_pad, rotation=0)
 
-        plt.colorbar(fraction=0.046, pad=0.04)
-        plt.title(f' L({self.p},{self.q}) \n'+r'$\Omega_K$='+f'{self.OmegaK:.4f} // '+r'$(\theta_0,\chi_0,\varphi_0)=$'+f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})',fontsize=12)
+        # Colorbar formatting
+        cbar = plt.colorbar(fraction=0.046, pad=0.04)
+        cbar.ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: rf'$10^{{{x:g}}}$'))
+
+        # Title formatting in a single line
+        title_str = (
+            r'$C_{\ell m \ell^\prime m^\prime}/\sqrt{C_\ell C_{\ell^\prime}}$' 
+            + f' for L({self.p},{self.q}) with ' 
+            + r'$\Omega_K$=' + f'{self.OmegaK:.4f} and ' 
+            + r'$(\theta_0,\chi_0,\varphi_0)=$' + f'({self.theta0:.2f},{self.chi0:.2f},{self.phi0:.2f})'
+        )
+            
+        plt.title(title_str, fontsize=12)
         
         if filename is not None:
-            plt.savefig(filename)
+            plt.savefig(filename,format='pdf',bbox_inches='tight',dpi=300)

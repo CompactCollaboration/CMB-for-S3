@@ -669,7 +669,7 @@ class LensSpace(SphericalTopology):
         return np.array([np.real(forward_KL), np.real(backward_KL)])
 
 
-    def plot_Clmlpmp(self, filename=None, m_ordering=False, positive_m_only=False):
+    def plot_Clmlpmp(self, filename=None, m_ordering=False, positive_m_only=False,cbar_min_exp=-8):
         from matplotlib import pyplot as plt 
         import matplotlib.ticker as ticker
 
@@ -756,7 +756,7 @@ class LensSpace(SphericalTopology):
         cmap = plt.cm.inferno.copy()
         cmap.set_bad(color='black')
 
-        plt.imshow(np.log10(np.abs(matrix_to_plot)), cmap=cmap, vmin=-8, origin='lower')
+        plt.imshow(np.log10(np.abs(matrix_to_plot)), cmap=cmap, vmin=cbar_min_exp, origin='lower')
 
         block_ends = np.cumsum(counts)
         start_indices = np.concatenate(([0], block_ends[:-1]))
@@ -812,6 +812,7 @@ class LensSpace(SphericalTopology):
 
         # Colorbar formatting
         cbar = plt.colorbar(fraction=0.046, pad=0.04)
+        cbar.ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
         cbar.ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: rf'$10^{{{x:g}}}$'))
 
         # Title formatting in a single line

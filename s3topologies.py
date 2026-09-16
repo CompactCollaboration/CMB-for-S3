@@ -222,13 +222,6 @@ class LensSpace(SphericalTopology):
                 raise ValueError("q must be less than p.")
         if gcd(self.p, self.q) != 1:
             raise ValueError("The greatest common factor of p and q must be 1.")
-
-        if self.chi0 < 0 or self.chi0 > np.pi/2:
-            raise ValueError("chi0 must be between 0 and pi/2 radians.")
-        if self.theta0 < 0 or self.theta0 > 2*np.pi:
-            raise ValueError("theta0 must be between 0 and 2*pi radians.")
-        if self.phi0 < 0 or self.phi0 > 2*np.pi:
-            raise ValueError("phi0 must be between 0 and 2*pi radians.")
         
         self.num_workers = self.params['num_workers']
         self.batchsize = self.params['batchsize']
@@ -673,7 +666,7 @@ class LensSpace(SphericalTopology):
             forward_KL += (lam - np.log(lam) - 1)
             backward_KL += (1.0/lam + np.log(lam) - 1)
             
-        return np.array([np.real(forward_KL), np.real(backward_KL)])
+        return np.array([np.real(forward_KL/2.0), np.real(backward_KL/2.0)])
 
 
     def plot_Clmlpmp(self, filename=None, m_ordering=False, positive_m_only=False,cbar_min_exp=-8):

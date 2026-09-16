@@ -270,8 +270,8 @@ class LensSpace(SphericalTopology):
                         delta_valid_T = np.ascontiguousarray(transfer_funcs[0, ell_valid - 2, n_idx])
                         delta_valid_E = np.ascontiguousarray(transfer_funcs[1, ell_valid - 2, n_idx])
 
-                    if self.chi0 == 0:
-                        
+                    if abs(self.chi0 - pi/2) < 1e-8 or abs(self.chi0)<1e-8:
+  
                         from scipy.sparse import coo_matrix
 
                         for k_start in range(0, num_pairs, CHUNK_SIZE):
@@ -281,7 +281,11 @@ class LensSpace(SphericalTopology):
                             mmR_list = mmR_all[k_start:k_end]
                             chunk_pairs_len = len(mmL_list)
 
-                            target_mm = mmL_list + mmR_list
+                            if abs(self.chi0 - pi/2) < 1e-8:
+                                target_mm = mmL_list + mmR_list
+                            if abs(self.chi0)<1e-8:
+                                #Technically the wigner d also picks up a phase for chi0=0, but diagonality in m would cancel it
+                                target_mm = mmL_list - mmR_list
                             valid_mask_2d = (mm_valid[:,None]==target_mm[None,:])
                             flat_i, flat_k = np.where(valid_mask_2d)
 
@@ -358,7 +362,7 @@ class LensSpace(SphericalTopology):
                                 C_local += prefactor * (Z_csr @ Z_csr.conj().T).toarray()
 
                     else:
-                        small_d = get_wigner_d_matrix_optimized(n, 2 * self.chi0)
+                        small_d = get_wigner_d_matrix_optimized(n,pi - 2 * self.chi0)
 
                         for k_start in range(0, num_pairs, CHUNK_SIZE):
                         

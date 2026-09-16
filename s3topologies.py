@@ -222,6 +222,13 @@ class LensSpace(SphericalTopology):
                 raise ValueError("q must be less than p.")
         if gcd(self.p, self.q) != 1:
             raise ValueError("The greatest common factor of p and q must be 1.")
+
+        if self.chi0 < 0 or self.chi0 > np.pi/2:
+            raise ValueError("chi0 must be between 0 and pi/2 radians.")
+        if self.theta0 < 0 or self.theta0 > 2*np.pi:
+            raise ValueError("theta0 must be between 0 and 2*pi radians.")
+        if self.phi0 < 0 or self.phi0 > 2*np.pi:
+            raise ValueError("phi0 must be between 0 and 2*pi radians.")
         
         self.num_workers = self.params['num_workers']
         self.batchsize = self.params['batchsize']

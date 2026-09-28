@@ -1,3 +1,5 @@
+### Installation
+
 Note: If you are running this code on a Mac, there are a couple of additional steps:
 
 `brew install llvm libomp`
@@ -21,3 +23,8 @@ Then
 -------------
 
 For an example of how to use the code, see the notebook ``Example_Notebook.ipynb``
+
+### Citation
+
+If you make use of the software or analysis in this repository, please consider citing the relevant paper
+

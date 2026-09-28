@@ -166,12 +166,12 @@ def get_all_lens_distances(pmax):
 
     return df2
 
-def Einv(z, OmegaM, OmegaK, OmegaL):
+def Einv(z, OmegaM, OmegaK, OmegaL, OmegaR=0.0):
     zp1 = 1 + z
-    return 1 / np.sqrt(OmegaM * zp1**3 + OmegaK * zp1**2 + OmegaL)
+    return 1 / np.sqrt(OmegaR * zp1**4 + OmegaM * zp1**3 + OmegaK * zp1**2 + OmegaL)
 
-def chi(z, OmegaM, OmegaK, OmegaL):
-    return np.sqrt(np.abs(-OmegaK)) * integ.quad(Einv, 0, z, args=(OmegaM, OmegaK, OmegaL))[0]
+def chi(z, OmegaM, OmegaK, OmegaL, OmegaR=0.0):
+    return np.sqrt(np.abs(-OmegaK)) * integ.quad(Einv, 0, z, args=(OmegaM, OmegaK, OmegaL, OmegaR))[0]
 
 def find_d_lss(OmegaK,H0=67.5,normalize=False):
     """
@@ -179,14 +179,15 @@ def find_d_lss(OmegaK,H0=67.5,normalize=False):
     If normalize=False, units are in Mpc. This is the default. Else, d_lss is normalized to Rc
     """
     zLS = 1090
-    OmegaM = 0.314 - 3.71 * OmegaK
-    OmegaL = 1 - OmegaM - OmegaK
+    OmegaR = 4.176e-5/(H0/100.)**2
+    OmegaM = (0.022 + 0.122 + 0.06/93.14) / (H0/100.)**2 # This matches the CAMB initialization
+    OmegaL = 1 - OmegaM - OmegaK - OmegaR
 
     if normalize:
-        return  2 * np.sqrt(np.abs(OmegaK)) * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
+        return  2 * np.sqrt(np.abs(OmegaK)) * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL, OmegaR))[0]
     else:
         c_H0 = (c/1000) / H0 # in Mpc
-        return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL))[0]
+        return 2 * c_H0 * integ.quad_vec(Einv, 0, zLS, args=(OmegaM, OmegaK, OmegaL, OmegaR))[0]
 
 def find_d_nc(p,OmegaK,q=1,chi0=0,H0=67.5,normalize=True):
     """

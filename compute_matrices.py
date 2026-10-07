@@ -21,7 +21,7 @@ from s3tools import get_available_cores, get_default_parameters
 
 
 # Set this to your release tag or Git commit when publishing.
-CODE_VERSION = "1.0"
+CODE_VERSION = "1.0.0"
 
 
 def json_default(value):

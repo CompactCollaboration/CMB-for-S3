@@ -1,22 +1,35 @@
 import numpy as np
 from math import gcd
 
-# --- OPTIMIZATION: Hardcoded constant to avoid importing Scipy globally ---
+# # --- OPTIMIZATION: Hardcoded constant to avoid importing Scipy globally ---
 SPEED_OF_LIGHT_KM_S = 299792.458
-# ------------------------------------------------------------------------
+# # ------------------------------------------------------------------------
 
 def get_default_parameters():
     params = {
         'OmegaK' : -1e-3,
-        'H0' : 67.5,
-        'accboost' : 2,
         'lmax' : 20,
-        'kmax' : 1e-3,
         'compute_kmax_internally': False,
         'compute_kmax_tol': 0.005,
+        'kmax' : 1e-3,
+        'accboost' : 2,
+        'onlyTT' : False,
+
+        # cosmological parameters
+        'ombh2' : 0.022,
+        'omch2' : 0.122,
+        'mnu' : 0.06,
+        'H0' : 67.5,
+        'tau' : 0.06,
+        'As' : 2e-9,
+        'ns' : 0.965,
+        
+        # lens space parameters
         'p' : 5,
         'q' : 2,
         'obs_ang' : [0.,0.,0.],
+
+        # runtime parameters
         'num_workers': None,
         'batchsize': None,
         'use_tqdm': False,
@@ -25,23 +38,34 @@ def get_default_parameters():
     return params
 
 def R2omk(R,H0=67.5):
+    """Calculates OmegaK given curvature radius."""
     c_H0 = SPEED_OF_LIGHT_KM_S / H0
     return -((c_H0 / R) ** 2)
 
 def omk2R(omk, H0=67.5):
+    """Calculates curvature radius given OmegaK."""
     c_H0 = SPEED_OF_LIGHT_KM_S / H0
     return c_H0 / np.sqrt(np.abs(omk))
 
 def omk2K(omk, H0=67.5):
+    """Calculates curvature given curvature OmegaK."""
     c_H0 = SPEED_OF_LIGHT_KM_S / H0
     return np.abs(omk) / (c_H0**2)
 
+def n2k(n,Rc):
+        return (n + 1) / Rc
+
+def k2n(k,Rc):
+    return int(np.round(Rc * k)) - 1
+
 def lmindex(n, lmin=2):
+    """Returns (l,m) pair for a given n."""
     l = int(np.floor(np.sqrt(n + lmin**2)))
     m = n - l * (l + 1) + lmin**2
     return np.array([l, m])
 
 def nindex(l, m, lmin=2):
+    """Returns n for a given (l,m) pair."""
     return l * (l + 1) - lmin**2 + m
 
 def get_m_ordering_indices(lmax, lmin=2, positive_m_only=False):
@@ -59,75 +83,8 @@ def get_m_ordering_indices(lmax, lmin=2, positive_m_only=False):
     
     return np.array([x[2] for x in lm_tuples])
 
-def primpower(k, omk, As=2.1e-9, ns=0.965):
-    import camb 
-    
-    K = omk2K(omk)
-    qs = np.sqrt(k**2 - K)
-    pars = camb.CAMBparams()
-    pars.set_cosmology(
-        H0=67.4, ombh2=0.022, omch2=0.122, mnu=0.06, omk=omk, tau=0.06
-    )
-    pars.InitPower.set_params(As=As, ns=ns, r=0)
-
-    return pars.scalar_power(qs) * (k**2) / qs**2
-
-def transfer_info(omk, acc_boost=2, klist=True, llist=True, lmax=20, interp=True):
-    import camb 
-    from scipy.interpolate import interp1d as interpolator 
-    
-    pars = camb.CAMBparams()
-    pars.set_cosmology(
-        H0=67.4, ombh2=0.022, omch2=0.122, mnu=0.06, omk=omk, tau=0.06
-    )
-    pars.InitPower.set_params(As=2.1e-9, ns=0.965, r=0)
-    pars.set_for_lmax(lmax)
-
-    pars.set_accuracy(
-        AccuracyBoost=acc_boost, lAccuracyBoost=acc_boost, lSampleBoost=50
-    )
-    pars.Accuracy.IntkAccuracyBoost = acc_boost
-    pars.Accuracy.SourcekAccuracyBoost = acc_boost
-    pars.Accuracy.TransferkBoost = acc_boost
-    pars.Accuracy.BesselBoost = acc_boost
-    pars.Transfer.high_precision = True
-
-    data = camb.get_transfer_functions(pars)
-    transfer_function = data.get_cmb_transfer_data(tp="scalar")
-    transfer_data = np.array(transfer_function.delta_p_l_k) * 1e6 * 2.7255
-    k_list = np.array(transfer_function.q)
-    ell_list = np.array(transfer_function.L)[: lmax - 1]
-
-    Rc = omk2R(omk)
-    nmax = int(np.floor(Rc * (k_list[-1] - 1e-8)))
-    my_k_list = np.arange(3, nmax) / Rc
-    my_k_list[0] += 1e-9
-
-    if interp:
-        interp_transf = np.zeros((len(ell_list), len(my_k_list)))
-        for i in range(len(ell_list)):
-            interp_transf[i, :] = interpolator(
-                k_list, transfer_data[0, i, :], kind="cubic"
-            )(my_k_list)
-        if klist and llist:
-            return my_k_list, ell_list, interp_transf
-        elif klist:
-            return my_k_list, interp_transf
-        elif llist:
-            return ell_list, interp_transf
-        else:
-            return interp_transf
-    else:
-        if klist and llist:
-            return k_list, ell_list, transfer_data[0, :, :]
-        elif klist:
-            return k_list, transfer_data[0, :, :]
-        elif llist:
-            return ell_list, transfer_data[0, :, :]
-        else:
-            return transfer_data[0, :, :]
-
 def find_mLmR_pairs(n, p, q, output_as_index=False):
+    """Find all (mL,mR) indices given n and a lens space specified by p and q."""
     a, b = q + 1, q - 1
     mod_val = 2 * p
 
@@ -179,7 +136,7 @@ def find_mLmR_pairs(n, p, q, output_as_index=False):
     return np.vstack(results) if results else np.array([])
 
 def get_available_cores():
-
+    """Get available CPU cores for matrix calculations."""
     import os
     
     slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK')

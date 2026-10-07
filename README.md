@@ -32,4 +32,4 @@ For basic examples of how to use the code, see the notebook ``Example_Notebook.i
 For an example script for computing multiple CMB matrices on a cluster, see ``compute_matrices.py``.
 
 # Citations
-If you use this code, please cite our paper.
+If you use this code, please copy the citations in ``CITATION.bib``.

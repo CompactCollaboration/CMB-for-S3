@@ -1,7 +1,7 @@
 cff-version: 1.0.0
 message: "If you use this software, please cite it as below."
 authors:
-  - name: "COMPACT"
+  - name: "COMPACT Collaboration"
   - family-names: "Martin Barandiaran"
     given-names: "Mikel"
   - family-names: "Petretti"
